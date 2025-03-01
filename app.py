@@ -12,6 +12,7 @@ import shutil
 from flasgger import Swagger, swag_from
 import yt_dlp
 import subprocess
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -809,6 +810,15 @@ def download_from_youtube(url, destination=None):
     
     logger.info(f"Will download to: {destination}")
     
+    # Multiple user agents to rotate and try
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    ]
+    
     # Check environment for debugging
     logger.info(f"Current working directory: {os.getcwd()}")
     logger.info(f"Files in current directory: {os.listdir('.')}")
@@ -871,206 +881,157 @@ def download_from_youtube(url, destination=None):
             cookie_file = temp_cookie_file
             logger.info(f"Created temporary cookie file: {temp_cookie_file}")
         
-        # Try different download methods in sequence until one works
+        # Try different download methods in sequence with multiple user agents
+        success = False
         
-        # Method 1: Direct command execution with yt-dlp (with cookies)
-        try:
-            logger.info("Trying yt-dlp direct command execution with cookies")
-            command = f"yt-dlp -v --cookies={cookie_file} --no-check-certificate -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{destination}'"
-            logger.info(f"Running command: {command}")
+        for user_agent in user_agents:
+            logger.info(f"Trying with user agent: {user_agent[:30]}...")
             
-            result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            logger.info(f"Command exit code: {result.returncode}")
-            
-            if result.returncode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
-                logger.info(f"Direct command successful: {os.path.getsize(destination)} bytes")
-                return destination
-            else:
-                logger.warning(f"Direct command failed: {result.stderr}")
-        except Exception as cmd_err:
-            logger.warning(f"Direct command error: {str(cmd_err)}")
-        
-        # Method 2: yt-dlp API
-        try:
-            logger.info("Trying yt-dlp API with cookies")
-            ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                'outtmpl': destination,
-                'cookiefile': cookie_file,
-                'verbose': True,
-                'no_warnings': False,
-                'noplaylist': True,
-                'retries': 10,
-                'fragment_retries': 10,
-                'skip_unavailable_fragments': True,
-                'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                'referer': 'https://www.youtube.com/'
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info("Downloading with yt-dlp...")
-                ydl.download([url])
-            
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                logger.info(f"yt-dlp API successful: {os.path.getsize(destination)} bytes")
-                return destination
-            else:
-                logger.warning("yt-dlp API output file not found or empty")
-        except Exception as ydl_err:
-            logger.warning(f"yt-dlp error: {str(ydl_err)}")
-        
-        # Method 3: Simplified yt-dlp approach
-        try:
-            logger.info("Trying simplified yt-dlp approach with different user agent")
-            ydl_opts = {
-                'format': 'best[height<=720]',  # Limit to 720p for better chance of success
-                'outtmpl': destination,
-                'cookiefile': cookie_file,
-                'quiet': False,
-                'verbose': True,
-                'no_warnings': False,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info("Downloading with simplified yt-dlp...")
-                ydl.download([url])
-            
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                logger.info(f"Simplified yt-dlp successful: {os.path.getsize(destination)} bytes")
-                return destination
-            else:
-                logger.warning("Simplified yt-dlp output file not found or empty")
-        except Exception as simple_err:
-            logger.warning(f"Simplified yt-dlp error: {str(simple_err)}")
-        
-        # Method 4: Try with youtube-dl as a fallback
-        try:
-            logger.info("Trying youtube-dl as fallback")
-            import youtube_dl
-            
-            youtubedl_opts = {
-                'format': 'best',
-                'outtmpl': destination,
-                'cookiefile': cookie_file,
-                'quiet': False,
-                'no_warnings': False,
-            }
-            
-            with youtube_dl.YoutubeDL(youtubedl_opts) as ydl:
-                logger.info("Downloading with youtube-dl...")
-                ydl.download([url])
-            
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                logger.info(f"youtube-dl successful: {os.path.getsize(destination)} bytes")
-                return destination
-            else:
-                logger.warning("youtube-dl output file not found or empty")
-        except Exception as ytd_err:
-            logger.warning(f"youtube-dl error: {str(ytd_err)}")
-        
-        # Method 5: Try with curl direct URL extraction (last resort for public videos)
-        if video_id:
+            # Method 1: Direct command execution with yt-dlp (with cookies)
             try:
-                logger.info("Trying direct URL extraction with curl")
-                # Try to fetch the YouTube watch page
-                get_page_cmd = f"curl -s 'https://www.youtube.com/watch?v={video_id}' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'"
-                page_result = subprocess.run(get_page_cmd, shell=True, capture_output=True, text=True)
+                logger.info("Trying yt-dlp direct command execution with cookies")
+                command = f'yt-dlp -v --cookies={cookie_file} --no-check-certificate --user-agent="{user_agent}" --referer="https://www.youtube.com/" -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]" "{url}" -o "{destination}"'
+                logger.info(f"Running command: {command}")
                 
-                # Look for a direct video URL or a URL from player response
-                import re
-                video_url_match = re.search(r'(?:"url":")(https://[^"]+\.mp4[^"]*)"', page_result.stdout)
+                result = subprocess.run(command, shell=True, capture_output=True, text=True)
+                logger.info(f"Command exit code: {result.returncode}")
                 
-                if video_url_match:
-                    direct_url = video_url_match.group(1).replace('\\u0026', '&')
-                    logger.info(f"Found direct video URL: {direct_url[:50]}...")
-                    
-                    # Download with curl
-                    download_cmd = f"curl -L '{direct_url}' -o '{destination}'"
-                    subprocess.run(download_cmd, shell=True, check=True)
-                    
-                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                        logger.info(f"Direct URL download successful: {os.path.getsize(destination)} bytes")
-                        return destination
-                    else:
-                        logger.warning("Direct URL download file not found or empty")
-                else:
-                    logger.warning("Could not find direct video URL in page source")
-            except Exception as curl_err:
-                logger.warning(f"Direct URL extraction error: {str(curl_err)}")
-                
-        # Method 6: As absolute last resort, try with pytube with cookie injection
-        try:
-            logger.info("Trying pytube with cookie injection as last resort")
-            from pytube import YouTube
-            
-            # Set up pytube with cookies if available
-            if cookie_file:
-                logger.info(f"Reading cookies from {cookie_file} for pytube")
-                cookies = {}
-                try:
-                    with open(cookie_file, 'r') as f:
-                        cookie_content = f.read()
-                        
-                    # Parse cookies
-                    cookie_matches = re.findall(r'\.youtube\.com\s+TRUE\s+\/\s+(TRUE|FALSE)\s+\d+\s+(\S+)\s+([^\s]+)', cookie_content)
-                    for _, name, value in cookie_matches:
-                        if name and value and not name.startswith('#'):
-                            cookies[name] = value
-                            
-                    logger.info(f"Extracted {len(cookies)} cookies for pytube")
-                except Exception as cookie_err:
-                    logger.warning(f"Error parsing cookies for pytube: {str(cookie_err)}")
-            
-            # Configure pytube
-            ytb = YouTube(url)
-            if cookies:
-                # Inject cookies into pytube session
-                for name, value in cookies.items():
-                    ytb._http.cookies.set(name, value, domain='.youtube.com')
-                
-            # Download highest quality MP4
-            logger.info("Finding highest resolution stream with pytube")
-            stream = ytb.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-            
-            if not stream:
-                logger.info("No progressive streams found, trying adaptive streams")
-                stream = ytb.streams.filter(adaptive=True, file_extension='mp4').order_by('resolution').desc().first()
-            
-            if stream:
-                logger.info(f"Found stream: {stream.resolution}, {stream.mime_type}")
-                stream.download(output_path=os.path.dirname(destination), filename=os.path.basename(destination))
-                
-                if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                    logger.info(f"Pytube download successful: {os.path.getsize(destination)} bytes")
+                if result.returncode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                    logger.info(f"Direct command successful: {os.path.getsize(destination)} bytes")
+                    success = True
                     return destination
                 else:
-                    logger.warning("Pytube output file not found or empty")
-            else:
-                logger.warning("No suitable streams found with pytube")
-        except Exception as pytube_err:
-            logger.warning(f"Pytube error: {str(pytube_err)}")
+                    logger.warning(f"Direct command failed: {result.stderr}")
+            except Exception as cmd_err:
+                logger.warning(f"Direct command error: {str(cmd_err)}")
             
+            # Method 2: yt-dlp API with this user agent
+            try:
+                logger.info(f"Trying yt-dlp API with user agent: {user_agent[:30]}...")
+                ydl_opts = {
+                    'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]',
+                    'outtmpl': destination,
+                    'cookiefile': cookie_file,
+                    'verbose': True,
+                    'no_warnings': False,
+                    'noplaylist': True,
+                    'retries': 10,
+                    'fragment_retries': 10,
+                    'skip_unavailable_fragments': True,
+                    'user_agent': user_agent,
+                    'referer': 'https://www.youtube.com/'
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logger.info("Downloading with yt-dlp...")
+                    ydl.download([url])
+                
+                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                    logger.info(f"yt-dlp API successful: {os.path.getsize(destination)} bytes")
+                    success = True
+                    return destination
+                else:
+                    logger.warning("yt-dlp API output file not found or empty")
+            except Exception as ydl_err:
+                logger.warning(f"yt-dlp error: {str(ydl_err)}")
+        
+        # Method 4: Try invidious as an alternative YouTube frontend
+        if not success and video_id:
+            try:
+                logger.info("Trying Invidious API as alternative YouTube frontend")
+                invidious_instances = [
+                    "https://invidious.snopyta.org",
+                    "https://yewtu.be",
+                    "https://invidious.kavin.rocks",
+                    "https://inv.riverside.rocks"
+                ]
+                
+                for instance in invidious_instances:
+                    try:
+                        logger.info(f"Trying Invidious instance: {instance}")
+                        api_url = f"{instance}/api/v1/videos/{video_id}"
+                        headers = {"User-Agent": random.choice(user_agents)}
+                        
+                        response = requests.get(api_url, headers=headers, timeout=10)
+                        if response.status_code == 200:
+                            video_data = response.json()
+                            
+                            if "adaptiveFormats" in video_data:
+                                formats = video_data["adaptiveFormats"]
+                                # Sort by quality (height)
+                                video_formats = [f for f in formats if "video" in f.get("type", "")]
+                                video_formats.sort(key=lambda x: x.get("height", 0), reverse=True)
+                                
+                                if video_formats:
+                                    format_url = video_formats[0]["url"]
+                                    logger.info(f"Found direct URL via Invidious: {format_url[:50]}...")
+                                    
+                                    # Download with requests
+                                    with requests.get(format_url, stream=True) as r:
+                                        r.raise_for_status()
+                                        with open(destination, 'wb') as f:
+                                            for chunk in r.iter_content(chunk_size=8192):
+                                                f.write(chunk)
+                                    
+                                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                        logger.info(f"Invidious download successful: {os.path.getsize(destination)} bytes")
+                                        success = True
+                                        return destination
+                    except Exception as inv_err:
+                        logger.warning(f"Invidious instance {instance} error: {str(inv_err)}")
+            except Exception as invidious_err:
+                logger.warning(f"Invidious API error: {str(invidious_err)}")
+        
+        # Method 5: Try with youtube-dl as a fallback
+        if not success:
+            try:
+                logger.info("Trying youtube-dl as fallback")
+                import youtube_dl
+                
+                for user_agent in user_agents:
+                    youtubedl_opts = {
+                        'format': 'best[height<=720]',
+                        'outtmpl': destination,
+                        'cookiefile': cookie_file,
+                        'quiet': False,
+                        'no_warnings': False,
+                        'user_agent': user_agent
+                    }
+                    
+                    with youtube_dl.YoutubeDL(youtubedl_opts) as ydl:
+                        logger.info(f"Downloading with youtube-dl using agent: {user_agent[:30]}...")
+                        ydl.download([url])
+                    
+                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                        logger.info(f"youtube-dl successful: {os.path.getsize(destination)} bytes")
+                        success = True
+                        return destination
+                    
+                    logger.warning("youtube-dl attempt failed, trying next user agent")
+            except Exception as ytd_err:
+                logger.warning(f"youtube-dl error: {str(ytd_err)}")
+        
         # Last resort - try with lower quality as it might bypass some restrictions
-        try:
-            logger.info("Trying lower quality download as ultimate fallback")
-            ydl_opts = {
-                'format': 'worst',  # Use lowest quality as a fallback
-                'outtmpl': destination,
-                'verbose': True,
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info("Downloading lowest quality with yt-dlp...")
-                ydl.download([url])
-            
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                logger.info(f"Low quality download successful: {os.path.getsize(destination)} bytes")
-                return destination
-            else:
-                logger.warning("Low quality download file not found or empty")
-        except Exception as low_err:
-            logger.warning(f"Low quality download error: {str(low_err)}")
+        if not success:
+            try:
+                logger.info("Trying lower quality download as ultimate fallback")
+                ydl_opts = {
+                    'format': 'worst',  # Use lowest quality as a fallback
+                    'outtmpl': destination,
+                    'verbose': True,
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logger.info("Downloading lowest quality with yt-dlp...")
+                    ydl.download([url])
+                
+                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                    logger.info(f"Low quality download successful: {os.path.getsize(destination)} bytes")
+                    return destination
+                else:
+                    logger.warning("Low quality download file not found or empty")
+            except Exception as low_err:
+                logger.warning(f"Low quality download error: {str(low_err)}")
         
         # If we get here, all methods have failed
         logger.error("All download methods failed")
