@@ -2224,6 +2224,384 @@ def index():
 def swagger_ui():
     return redirect('/docs', code=302)
 
+# Add this new function after the existing download functions
+
+def download_youtube_highest_quality(url):
+    """
+    Download a YouTube video in the highest possible resolution.
+    
+    Args:
+        url (str): The URL of the YouTube video.
+        
+    Returns:
+        dict: Information about the downloaded file including path and download URL.
+    """
+    logger.info(f"Starting high quality download from YouTube URL: {url}")
+    
+    # Create videos directory if it doesn't exist
+    videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'videos')
+    os.makedirs(videos_dir, exist_ok=True)
+    
+    # Extract video ID for file naming
+    video_id = None
+    try:
+        if "youtube.com/watch?v=" in url:
+            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        
+        logger.info(f"Extracted video ID: {video_id}")
+    except Exception as e:
+        logger.warning(f"Error extracting video ID: {str(e)}")
+        video_id = f"youtube_{int(time.time())}"
+    
+    # Generate a unique filename
+    timestamp = int(time.time())
+    filename = f"{video_id}_{timestamp}.mp4"
+    destination = os.path.join(videos_dir, filename)
+    
+    logger.info(f"Will download to: {destination}")
+    
+    # Use our proxy method with priority on highest resolution
+    success = False
+    error_messages = []
+    result_info = {
+        "success": False,
+        "file_path": None,
+        "file_size": 0,
+        "download_url": None,
+        "video_id": video_id,
+        "error": None
+    }
+    
+    # Try Piped API first - it usually works best for highest quality
+    try:
+        if video_id:
+            # Piped API approach
+            api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
+            logger.info(f"Requesting stream info from Piped API for highest quality: {api_url}")
+            
+            response = requests.get(api_url, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Look for video streams - don't limit to 720p for this endpoint
+                if "videoStreams" in data and data["videoStreams"]:
+                    # Sort by quality (height)
+                    video_streams = sorted(
+                        data["videoStreams"], 
+                        key=lambda x: int(x.get("height", 0) * x.get("fps", 30)), 
+                        reverse=True
+                    )
+                    
+                    # Take the highest quality stream
+                    if video_streams and "url" in video_streams[0]:
+                        selected_stream = video_streams[0]
+                        video_url = selected_stream["url"]
+                        quality = f"{selected_stream.get('height', 'unknown')}p"
+                        fps = selected_stream.get('fps', 'unknown')
+                        
+                        logger.info(f"Found highest quality video URL via Piped API: {quality} {fps}fps")
+                        
+                        # Download video
+                        with requests.get(video_url, stream=True) as r:
+                            r.raise_for_status()
+                            with open(destination, 'wb') as f:
+                                for chunk in r.iter_content(chunk_size=8192):
+                                    f.write(chunk)
+                        
+                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                            file_size = os.path.getsize(destination)
+                            logger.info(f"Piped API highest quality download successful: {file_size} bytes")
+                            
+                            # Generate download URL
+                            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                            if request and request.host:
+                                server_name = request.host
+                            
+                            protocol = os.environ.get('PROTOCOL', 'https')
+                            download_url = f"{protocol}://{server_name}/download/{filename}"
+                            
+                            result_info = {
+                                "success": True,
+                                "file_path": destination,
+                                "file_name": filename,
+                                "file_size": file_size,
+                                "download_url": download_url,
+                                "video_id": video_id,
+                                "quality": quality,
+                                "fps": fps,
+                                "error": None
+                            }
+                            
+                            return result_info
+    except Exception as e:
+        error_message = f"Error with Piped API highest quality: {str(e)}"
+        logger.warning(error_message)
+        error_messages.append(error_message)
+    
+    # If Piped fails, try Invidious
+    try:
+        if video_id:
+            # Invidious approach - try multiple instances
+            invidious_instances = [
+                "https://invidious.snopyta.org",
+                "https://yewtu.be",
+                "https://invidious.kavin.rocks",
+                "https://inv.riverside.rocks"
+            ]
+            
+            for instance in invidious_instances:
+                try:
+                    api_url = f"{instance}/api/v1/videos/{video_id}"
+                    logger.info(f"Requesting video info from Invidious API for highest quality: {api_url}")
+                    
+                    response = requests.get(api_url, timeout=30)
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # Check for formats
+                        formats = []
+                        if "adaptiveFormats" in data:
+                            formats.extend(data["adaptiveFormats"])
+                        if "formatStreams" in data:
+                            formats.extend(data["formatStreams"])
+                        
+                        if formats:
+                            # Get video formats and sort by quality
+                            video_formats = [f for f in formats if "video" in f.get("type", "")]
+                            video_formats.sort(key=lambda x: int(x.get("height", 0) * x.get("fps", 30)), reverse=True)
+                            
+                            if video_formats and "url" in video_formats[0]:
+                                selected_format = video_formats[0]
+                                video_url = selected_format["url"]
+                                quality = f"{selected_format.get('height', 'unknown')}p"
+                                fps = selected_format.get('fps', 'unknown')
+                                
+                                logger.info(f"Found highest quality URL via Invidious: {quality} {fps}fps")
+                                
+                                # Download video
+                                with requests.get(video_url, stream=True) as r:
+                                    r.raise_for_status()
+                                    with open(destination, 'wb') as f:
+                                        for chunk in r.iter_content(chunk_size=8192):
+                                            f.write(chunk)
+                                
+                                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                    file_size = os.path.getsize(destination)
+                                    logger.info(f"Invidious API highest quality download successful: {file_size} bytes")
+                                    
+                                    # Generate download URL
+                                    server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                                    if request and request.host:
+                                        server_name = request.host
+                                    
+                                    protocol = os.environ.get('PROTOCOL', 'https')
+                                    download_url = f"{protocol}://{server_name}/download/{filename}"
+                                    
+                                    result_info = {
+                                        "success": True,
+                                        "file_path": destination,
+                                        "file_name": filename,
+                                        "file_size": file_size,
+                                        "download_url": download_url,
+                                        "video_id": video_id,
+                                        "quality": quality,
+                                        "fps": fps,
+                                        "error": None
+                                    }
+                                    
+                                    return result_info
+                except Exception as instance_error:
+                    logger.warning(f"Error with Invidious instance {instance}: {str(instance_error)}")
+    except Exception as e:
+        error_message = f"Error with Invidious API highest quality: {str(e)}"
+        logger.warning(error_message)
+        error_messages.append(error_message)
+    
+    # As a last resort, use yt-dlp
+    try:
+        logger.info("Trying yt-dlp for highest quality download")
+        
+        # Find cookie files
+        cookie_files = [
+            '/app/cookies.txt',
+            '/app/youtube_cookies.txt',
+            '/app/auth/cookies.txt',
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt'),
+        ]
+        
+        cookie_file = None
+        for f in cookie_files:
+            if os.path.exists(f):
+                cookie_file = f
+                logger.info(f"Found cookie file: {f}")
+                break
+        
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Highest quality
+            'outtmpl': destination,
+            'cookiefile': cookie_file,
+            'verbose': True,
+            'no_warnings': False,
+            'noplaylist': True,
+            'retries': 10,
+            'fragment_retries': 10,
+            'skip_unavailable_fragments': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/'
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logger.info("Downloading with yt-dlp in highest quality...")
+            info = ydl.extract_info(url, download=True)
+            
+            if info and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination)
+                logger.info(f"yt-dlp highest quality download successful: {file_size} bytes")
+                
+                # Try to get quality info
+                quality = "unknown"
+                fps = "unknown"
+                if "height" in info:
+                    quality = f"{info['height']}p"
+                if "fps" in info:
+                    fps = info["fps"]
+                
+                # Generate download URL
+                server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                if request and request.host:
+                    server_name = request.host
+                
+                protocol = os.environ.get('PROTOCOL', 'https')
+                download_url = f"{protocol}://{server_name}/download/{filename}"
+                
+                result_info = {
+                    "success": True,
+                    "file_path": destination,
+                    "file_name": filename,
+                    "file_size": file_size,
+                    "download_url": download_url,
+                    "video_id": video_id,
+                    "quality": quality,
+                    "fps": fps,
+                    "error": None
+                }
+                
+                return result_info
+    except Exception as e:
+        error_message = f"Error with yt-dlp highest quality: {str(e)}"
+        logger.warning(error_message)
+        error_messages.append(error_message)
+    
+    # If we reach here, all methods have failed
+    error_details = "\n".join(error_messages)
+    error_message = f"Failed to download YouTube video in highest quality. Try a different video or try again later."
+    logger.error(f"All highest quality download methods failed. Errors:\n{error_details}")
+    
+    result_info["error"] = error_message
+    return result_info
+
+
+# Add this new endpoint function
+@app.route('/download_youtube', methods=['POST'])
+@swag_from({
+    'tags': ['Video Download'],
+    'summary': 'Download YouTube video in highest resolution',
+    'description': 'Downloads a YouTube video in the highest available resolution and returns a direct download link without any processing.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['youtube_url'],
+                'properties': {
+                    'youtube_url': {
+                        'type': 'string',
+                        'description': 'YouTube video URL',
+                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Video download information',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'download_url': {'type': 'string'},
+                    'file_size': {'type': 'integer'},
+                    'video_id': {'type': 'string'},
+                    'quality': {'type': 'string'},
+                    'fps': {'type': 'string'},
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
+def download_youtube_endpoint():
+    """Download a YouTube video in highest quality without processing."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        # Validate required parameters
+        if "youtube_url" not in data:
+            return jsonify({"error": "Missing required parameter: youtube_url"}), 400
+            
+        youtube_url = data["youtube_url"]
+        
+        # Validate URL
+        if not youtube_url or not isinstance(youtube_url, str):
+            return jsonify({"error": "Invalid YouTube URL"}), 400
+            
+        # Basic validation of YouTube URL format
+        if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
+            return jsonify({"error": "Invalid YouTube URL format"}), 400
+            
+        # Download the video
+        logger.info(f"Received request to download YouTube video: {youtube_url}")
+        result = download_youtube_highest_quality(youtube_url)
+        
+        if result["success"]:
+            return jsonify({
+                "success": True,
+                "download_url": result["download_url"],
+                "file_size": result["file_size"],
+                "video_id": result["video_id"],
+                "quality": result["quality"],
+                "fps": result["fps"]
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": result["error"] or "Failed to download the video"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Error in download_youtube endpoint: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"error": str(e), "success": False}), 500
+
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 3000))) 
