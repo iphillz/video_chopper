@@ -8,6 +8,7 @@ import tempfile
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 import shutil
 from flasgger import Swagger, swag_from
+import yt_dlp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -76,32 +77,38 @@ def extract_file_id(google_drive_link):
     
     raise ValueError("Invalid Google Drive link format")
 
-def get_direct_download_url(file_id):
-    """Generate a direct download URL from a Google Drive file ID."""
-    return f"https://drive.google.com/uc?export=download&id={file_id}"
-
-def download_file(url, destination):
-    """Download a file from a URL to a destination path."""
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
+def download_from_google_drive(url, destination):
+    """Download a file from Google Drive using yt-dlp."""
+    logger.info(f"Downloading video from Google Drive URL: {url}")
     
-    with open(destination, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': destination,
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+    }
     
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+    
+    logger.info(f"Download complete: {destination}")
     return destination
 
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
+    logger.info(f"Opening video file: {input_path}")
     video = VideoFileClip(input_path)
     clips = []
     
     for start, end in timestamps:
+        logger.info(f"Creating clip from {start}s to {end}s")
         clip = video.subclip(start, end)
         clips.append(clip)
     
     final_clip = concatenate_videoclips(clips) if clips else None
     if final_clip:
+        logger.info(f"Writing final video to: {output_path}")
         final_clip.write_videofile(output_path)
         final_clip.close()
     
@@ -195,13 +202,9 @@ def process_google_drive():
         input_file = os.path.join(temp_dir, "input_video.mp4")
         
         try:
-            # Extract file ID and generate direct download URL
-            file_id = extract_file_id(google_drive_link)
-            download_url = get_direct_download_url(file_id)
-            
-            # Download the video
-            logger.info(f"Downloading video from Google Drive: {file_id}")
-            download_file(download_url, input_file)
+            # Download using yt-dlp
+            logger.info(f"Starting download from: {google_drive_link}")
+            download_from_google_drive(google_drive_link, input_file)
             
             # Generate unique output filename
             output_filename = f"{uuid.uuid4()}.mp4"
