@@ -19,7 +19,7 @@ COPY app.py .
 RUN mkdir -p /app/videos
 
 # Expose port for Flask application
-EXPOSE 5000
+EXPOSE 3000
 
 # Run the application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--log-level", "info", "app:app"] 
+CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--log-level", "info", "app:app"] 

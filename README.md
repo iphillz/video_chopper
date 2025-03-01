@@ -16,7 +16,7 @@ A Python-based API for processing and editing videos from Google Drive. This API
 
 The API includes interactive documentation using Swagger UI, which allows you to explore and test all the endpoints.
 
-- Access the documentation at `/docs/` when the server is running
+- Access the documentation at `/docs` when the server is running
 - View detailed information about request parameters and response formats
 - Test the API directly from the documentation interface
 
@@ -103,7 +103,7 @@ Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=shar
 4. **Configure the deployment**
    - Coolify should automatically detect the Dockerfile
    - Set environment variables if needed (none required by default)
-   - Configure the port: Set the published port to `5000`
+   - Configure the port: Set the published port to `3000`
 
 5. **Deploy the application**
    - Click "Deploy"
@@ -112,13 +112,13 @@ Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=shar
 6. **Access your API**
    - Once deployed, Coolify will provide a URL to access your API
    - You can now send requests to the API endpoints
-   - Access the Swagger UI documentation at `your-api-url/docs/`
+   - Access the Swagger UI documentation at `your-api-url/docs`
 
 ### Environment Variables (Optional)
 
 While no environment variables are required by default, you can customize the application by setting the following:
 
-- `PORT`: Change the port the application listens on (default: 5000)
+- `PORT`: Change the port the application listens on (default: 3000)
 - `LOG_LEVEL`: Set the logging level (default: INFO)
 
 ## Local Development
@@ -146,8 +146,8 @@ While no environment variables are required by default, you can customize the ap
    python app.py
    ```
 
-4. The API will be available at `http://localhost:5000`
-   - Access the Swagger UI documentation at `http://localhost:5000/docs/`
+4. The API will be available at `http://localhost:3000`
+   - Access the Swagger UI documentation at `http://localhost:3000/docs`
 
 ## Docker Usage
 
@@ -158,12 +158,12 @@ docker build -t video-clip-api .
 
 ### Run the container:
 ```
-docker run -p 5000:5000 -d video-clip-api
+docker run -p 3000:3000 -d video-clip-api
 ```
 
 After running the container, you can access:
-- The API at `http://localhost:5000`
-- Swagger documentation at `http://localhost:5000/docs/`
+- The API at `http://localhost:3000`
+- Swagger documentation at `http://localhost:3000/docs`
 
 ## License
 
