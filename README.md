@@ -98,7 +98,27 @@ The API includes interactive documentation using Swagger UI, which allows you to
 4. Click "Copy link" to copy the shareable link to your clipboard.
 5. Use this link in your API request.
 
-Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing`
+Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view`
+
+### Important Notes About Google Drive Links
+
+- The API supports several Google Drive link formats:
+  - `https://drive.google.com/file/d/YOUR_FILE_ID/view`
+  - `https://drive.google.com/open?id=YOUR_FILE_ID`
+  - `https://docs.google.com/file/d/YOUR_FILE_ID/view`
+
+- Ensure the file is shared with "Anyone with the link" permissions
+- For large files (>100MB), the processing may take longer
+- The API automatically extracts the file ID from your link and creates a direct download URL
+
+### Example
+
+If your Google Drive link is:
+```
+https://drive.google.com/file/d/1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ/view
+```
+
+The API will extract the file ID `1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ` and create a direct download URL automatically.
 
 ## Using the API for Video Processing
 

@@ -85,22 +85,76 @@ def extract_file_id(google_drive_link):
     raise ValueError("Invalid Google Drive link format")
 
 def download_from_google_drive(url, destination):
-    """Download a file from Google Drive using yt-dlp."""
-    logger.info(f"Downloading video from Google Drive URL: {url}")
-    
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': destination,
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
-    
-    logger.info(f"Download complete: {destination}")
-    return destination
+    """Download a file from Google Drive using direct download link."""
+    try:
+        # Extract file ID from the URL
+        file_id = extract_file_id(url)
+        logger.info(f"Extracted file ID: {file_id}")
+        
+        # Create direct download URL
+        direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        logger.info(f"Using direct download URL: {direct_url}")
+        
+        # For larger files, Google might show a confirmation page
+        # We need to handle that with a session
+        session = requests.Session()
+        
+        # First request to get confirmation token if needed
+        response = session.get(direct_url, stream=True)
+        token = None
+        
+        # Check if there's a download confirmation page
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                token = value
+                logger.info("Received download confirmation token")
+                break
+        
+        # If we have a token, we need to confirm the download
+        if token:
+            direct_url = f"{direct_url}&confirm={token}"
+            logger.info(f"Using confirmed download URL: {direct_url}")
+        
+        # Download the file
+        response = session.get(direct_url, stream=True)
+        
+        # Save the file
+        with open(destination, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB chunks
+                if chunk:
+                    f.write(chunk)
+        
+        # Verify file was downloaded
+        if os.path.getsize(destination) == 0:
+            raise Exception("Downloaded file is empty")
+            
+        logger.info(f"Download complete: {destination}")
+        return destination
+        
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        # If direct download fails, try with yt-dlp as a fallback
+        logger.info("Trying fallback download method with yt-dlp")
+        
+        try:
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': destination,
+                'noplaylist': True,
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+                
+            if os.path.getsize(destination) == 0:
+                raise Exception("Downloaded file is empty")
+                
+            logger.info(f"Fallback download complete: {destination}")
+            return destination
+        except Exception as fallback_error:
+            raise Exception(f"Both download methods failed. Original error: {str(e)}. Fallback error: {str(fallback_error)}")
 
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
@@ -133,10 +187,23 @@ def process_video_job(job_id, google_drive_link, timestamps):
         input_file = os.path.join(temp_dir, "input_video.mp4")
         
         try:
-            # Download using yt-dlp
+            # Download using direct method
             jobs[job_id]["message"] = "Downloading video from Google Drive..."
             logger.info(f"Starting download from: {google_drive_link}")
+            
+            try:
+                file_id = extract_file_id(google_drive_link)
+                jobs[job_id]["message"] = f"Extracted file ID: {file_id}, downloading..."
+            except Exception as e:
+                jobs[job_id]["message"] = f"Warning: Could not extract file ID: {str(e)}"
+                
             download_from_google_drive(google_drive_link, input_file)
+            
+            # Check if file exists and has content
+            if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
+                raise Exception("Downloaded file is empty or does not exist")
+            
+            jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
             
             # Generate unique output filename
             output_filename = f"{uuid.uuid4()}.mp4"
@@ -180,7 +247,7 @@ def process_video_job(job_id, google_drive_link, timestamps):
 @swag_from({
     'tags': ['Video Processing'],
     'summary': 'Process video from Google Drive',
-    'description': 'Downloads a video from Google Drive, cuts segments based on timestamps, and concatenates them',
+    'description': 'Downloads a video from Google Drive, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
     'parameters': [
         {
             'name': 'body',
@@ -192,8 +259,8 @@ def process_video_job(job_id, google_drive_link, timestamps):
                 'properties': {
                     'google_drive_link': {
                         'type': 'string',
-                        'description': 'Shareable link to a Google Drive video',
-                        'example': 'https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing'
+                        'description': 'Shareable link to a Google Drive video. The link should be in one of these formats: https://drive.google.com/file/d/YOUR_FILE_ID/view or https://drive.google.com/open?id=YOUR_FILE_ID',
+                        'example': 'https://drive.google.com/file/d/1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ/view'
                     },
                     'timestamps': {
                         'type': 'array',
