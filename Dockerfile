@@ -21,5 +21,5 @@ RUN mkdir -p /app/videos
 # Expose port for Flask application
 EXPOSE 3000
 
-# Run the application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--log-level", "info", "app:app"] 
+# Run the application with Gunicorn with increased timeout
+CMD ["gunicorn", "--bind", "0.0.0.0:3000", "--timeout", "300", "--log-level", "info", "app:app"] 

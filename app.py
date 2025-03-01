@@ -2,7 +2,9 @@ import os
 import re
 import uuid
 import logging
-from flask import Flask, request, jsonify, send_from_directory, redirect
+import threading
+import time
+from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
 import requests
 import tempfile
 from moviepy.editor import VideoFileClip, concatenate_videoclips
@@ -60,6 +62,11 @@ swagger = Swagger(app, config=swagger_config, template=swagger_template)
 VIDEO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videos")
 os.makedirs(VIDEO_DIR, exist_ok=True)
 
+# In-memory job tracking
+# In a production application, this should be replaced with a persistent store
+# like Redis or a database
+jobs = {}
+
 def extract_file_id(google_drive_link):
     """Extract the file ID from a Google Drive link."""
     # Pattern for different Google Drive link formats
@@ -115,6 +122,60 @@ def process_video(input_path, timestamps, output_path):
     video.close()
     return output_path
 
+def process_video_job(job_id, google_drive_link, timestamps):
+    """Background job to process a video."""
+    try:
+        # Update job status to processing
+        jobs[job_id]["status"] = "processing"
+        
+        # Create a temp directory for downloads
+        temp_dir = tempfile.mkdtemp()
+        input_file = os.path.join(temp_dir, "input_video.mp4")
+        
+        try:
+            # Download using yt-dlp
+            jobs[job_id]["message"] = "Downloading video from Google Drive..."
+            logger.info(f"Starting download from: {google_drive_link}")
+            download_from_google_drive(google_drive_link, input_file)
+            
+            # Generate unique output filename
+            output_filename = f"{uuid.uuid4()}.mp4"
+            output_path = os.path.join(VIDEO_DIR, output_filename)
+            
+            # Process video
+            jobs[job_id]["message"] = f"Processing video with {len(timestamps)} timestamp pairs..."
+            logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
+            process_video(input_file, timestamps, output_path)
+            
+            # Generate download URL
+            download_url = f"/download/{output_filename}"
+            
+            # Update job status to complete
+            jobs[job_id].update({
+                "status": "completed",
+                "download_url": download_url,
+                "message": "Video processed successfully"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing video: {str(e)}")
+            jobs[job_id].update({
+                "status": "failed",
+                "message": f"Error processing video: {str(e)}"
+            })
+        
+        finally:
+            # Clean up temporary files
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in job: {str(e)}")
+        jobs[job_id].update({
+            "status": "failed",
+            "message": f"Unexpected error: {str(e)}"
+        })
+
 @app.route('/process_google_drive', methods=['POST'])
 @swag_from({
     'tags': ['Video Processing'],
@@ -150,28 +211,20 @@ def process_video(input_path, timestamps, output_path):
         }
     ],
     'responses': {
-        '200': {
-            'description': 'Video processed successfully',
+        '202': {
+            'description': 'Job accepted for processing',
             'schema': {
                 'type': 'object',
                 'properties': {
-                    'success': {'type': 'boolean'},
-                    'download_url': {'type': 'string'},
-                    'message': {'type': 'string'}
+                    'job_id': {'type': 'string'},
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'status_url': {'type': 'string'}
                 }
             }
         },
         '400': {
             'description': 'Bad request parameters',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
-                }
-            }
-        },
-        '500': {
-            'description': 'Server error',
             'schema': {
                 'type': 'object',
                 'properties': {
@@ -197,44 +250,91 @@ def process_google_drive():
         if not timestamps or not isinstance(timestamps, list):
             return jsonify({"error": "Invalid or missing timestamps"}), 400
         
-        # Create a temp directory for downloads
-        temp_dir = tempfile.mkdtemp()
-        input_file = os.path.join(temp_dir, "input_video.mp4")
+        # Create a job ID
+        job_id = str(uuid.uuid4())
         
-        try:
-            # Download using yt-dlp
-            logger.info(f"Starting download from: {google_drive_link}")
-            download_from_google_drive(google_drive_link, input_file)
-            
-            # Generate unique output filename
-            output_filename = f"{uuid.uuid4()}.mp4"
-            output_path = os.path.join(VIDEO_DIR, output_filename)
-            
-            # Process video
-            logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
-            process_video(input_file, timestamps, output_path)
-            
-            # Generate download URL
-            download_url = f"/download/{output_filename}"
-            
-            return jsonify({
-                "success": True,
-                "download_url": download_url,
-                "message": "Video processed successfully"
-            })
-            
-        except Exception as e:
-            logger.error(f"Error processing video: {str(e)}")
-            return jsonify({"error": f"Error processing video: {str(e)}"}), 500
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
         
-        finally:
-            # Clean up temporary files
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_video_job,
+            args=(job_id, google_drive_link, timestamps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        return jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
+        }), 202
     
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+@app.route('/job/<job_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Job Status'],
+    'summary': 'Get job status',
+    'description': 'Returns the status of a video processing job',
+    'parameters': [
+        {
+            'name': 'job_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'ID of the job'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Job status',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'job_id': {'type': 'string'},
+                    'status': {'type': 'string', 'enum': ['queued', 'processing', 'completed', 'failed']},
+                    'message': {'type': 'string'},
+                    'download_url': {'type': 'string'}
+                }
+            }
+        },
+        '404': {
+            'description': 'Job not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
+def job_status(job_id):
+    """Endpoint to check the status of a job."""
+    if job_id not in jobs:
+        return jsonify({"error": "Job not found"}), 404
+    
+    job = jobs[job_id].copy()
+    job["job_id"] = job_id
+    
+    # Clean up old jobs that are complete or failed and older than 1 hour
+    current_time = time.time()
+    for jid in list(jobs.keys()):
+        j = jobs[jid]
+        if j["status"] in ["completed", "failed"] and current_time - j.get("created_at", 0) > 3600:
+            jobs.pop(jid, None)
+    
+    return jsonify(job)
 
 @app.route('/download/<filename>', methods=['GET'])
 @swag_from({
@@ -303,6 +403,7 @@ def index():
         "documentation": "/docs",
         "endpoints": [
             {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
+            {"path": "/job/<job_id>", "method": "GET", "description": "Check job status"},
             {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
             {"path": "/health", "method": "GET", "description": "Health check"},
             {"path": "/docs", "method": "GET", "description": "API documentation"}

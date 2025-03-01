@@ -11,6 +11,7 @@ A Python-based API for processing and editing videos from Google Drive. This API
 - Containerized with Docker for easy deployment
 - Ready for deployment with Coolify
 - Interactive API documentation with Swagger UI
+- Asynchronous video processing to handle long operations
 
 ## API Documentation
 
@@ -26,7 +27,7 @@ The API includes interactive documentation using Swagger UI, which allows you to
 
 **Endpoint:** `POST /process_google_drive`
 
-**Description:** Processes a video from Google Drive by extracting segments based on specified timestamps and concatenating them.
+**Description:** Initiates asynchronous processing of a video from Google Drive by extracting segments based on specified timestamps and concatenating them.
 
 **Request Body:**
 ```json
@@ -39,13 +40,36 @@ The API includes interactive documentation using Swagger UI, which allows you to
 **Response:**
 ```json
 {
-  "success": true,
-  "download_url": "/download/abc123-456def.mp4",
-  "message": "Video processed successfully"
+  "job_id": "abc123-456def",
+  "status": "queued",
+  "message": "Job queued for processing",
+  "status_url": "/job/abc123-456def"
 }
 ```
 
-### 2. Download Processed Video
+### 2. Check Job Status
+
+**Endpoint:** `GET /job/<job_id>`
+
+**Description:** Checks the status of a video processing job.
+
+**Response:**
+```json
+{
+  "job_id": "abc123-456def",
+  "status": "completed",
+  "message": "Video processed successfully",
+  "download_url": "/download/xyz789.mp4"
+}
+```
+
+**Possible status values:**
+- `queued`: Job is waiting to be processed
+- `processing`: Job is currently being processed
+- `completed`: Job has completed successfully
+- `failed`: Job has failed
+
+### 3. Download Processed Video
 
 **Endpoint:** `GET /download/<filename>`
 
@@ -53,7 +77,7 @@ The API includes interactive documentation using Swagger UI, which allows you to
 
 **Response:** The processed video file.
 
-### 3. Health Check
+### 4. Health Check
 
 **Endpoint:** `GET /health`
 
@@ -75,6 +99,15 @@ The API includes interactive documentation using Swagger UI, which allows you to
 5. Use this link in your API request.
 
 Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing`
+
+## Using the API for Video Processing
+
+1. Submit a video processing request to `/process_google_drive` with your Google Drive link and timestamps
+2. You'll receive a job ID and a status URL
+3. Poll the status URL to check when processing is complete
+4. Once the status is "completed", use the provided download URL to get the processed video
+
+This approach allows processing of larger videos without timeout issues.
 
 ## Deployment with Coolify
 
