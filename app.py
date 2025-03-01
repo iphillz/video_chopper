@@ -246,6 +246,42 @@ def download_from_google_drive(url, destination):
         logger.error(f"All download methods failed: {str(e)}")
         raise Exception(f"Failed to download file from Google Drive: {str(e)}")
 
+def download_from_youtube(url, destination):
+    """Download a video from YouTube using yt-dlp at maximum resolution."""
+    logger.info(f"Starting YouTube download: {url}")
+    
+    try:
+        # Configure yt-dlp for best quality
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Get best quality
+            'outtmpl': destination,  # Output filename
+            'noplaylist': True,      # Only download the video, not the playlist
+            'quiet': False,          # Show progress
+            'no_warnings': False,    # Show warnings
+            'verbose': True,         # Verbose output for debugging
+            'retries': 10,           # Number of retries
+            'fragment_retries': 10,  # Number of fragment retries
+            'continuedl': True,      # Continue partial downloads
+            'merge_output_format': 'mp4'  # Ensure output is mp4
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logger.info(f"Starting YouTube download with yt-dlp: {url}")
+            ydl.download([url])
+        
+        # Verify the download was successful
+        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+            file_size = os.path.getsize(destination) / (1024 * 1024)
+            logger.info(f"YouTube download successful: {destination}, size: {file_size:.2f} MB")
+            return destination
+        else:
+            logger.error("YouTube download failed: File is empty or missing")
+            raise Exception("Downloaded YouTube file is empty or missing")
+    
+    except Exception as e:
+        logger.error(f"YouTube download failed: {str(e)}")
+        raise Exception(f"Failed to download YouTube video: {str(e)}")
+
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
     logger.info(f"Opening video file: {input_path}")
@@ -488,6 +524,69 @@ def process_video_job(job_id, google_drive_link, timestamps):
             "message": f"Unexpected error: {str(e)}"
         })
 
+def process_youtube_job(job_id, youtube_url, timestamps):
+    """Background job to process a YouTube video."""
+    try:
+        # Update job status to processing
+        jobs[job_id]["status"] = "processing"
+        
+        # Create a temp directory for downloads
+        temp_dir = tempfile.mkdtemp()
+        input_file = os.path.join(temp_dir, "input_video.mp4")
+        
+        try:
+            # Download from YouTube
+            jobs[job_id]["message"] = "Downloading video from YouTube..."
+            logger.info(f"Starting download from YouTube: {youtube_url}")
+            
+            download_from_youtube(youtube_url, input_file)
+            
+            # Check if file exists and has content
+            if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
+                raise Exception("Downloaded file is empty or does not exist")
+            
+            jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
+            
+            # Generate unique output filename
+            output_filename = f"{uuid.uuid4()}.mp4"
+            output_path = os.path.join(VIDEO_DIR, output_filename)
+            
+            # Process video
+            jobs[job_id]["message"] = f"Processing video with {len(timestamps)} timestamp pairs..."
+            logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
+            process_video(input_file, timestamps, output_path)
+            
+            # Generate download URL - use full URL including hostname
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            protocol = os.environ.get('PROTOCOL', 'http')
+            download_url = f"{protocol}://{server_name}/download/{output_filename}"
+            
+            # Update job status to complete
+            jobs[job_id].update({
+                "status": "completed",
+                "download_url": download_url,
+                "message": "YouTube video processed successfully"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing YouTube video: {str(e)}")
+            jobs[job_id].update({
+                "status": "failed",
+                "message": f"Error processing YouTube video: {str(e)}"
+            })
+        
+        finally:
+            # Clean up temporary files
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in YouTube job: {str(e)}")
+        jobs[job_id].update({
+            "status": "failed",
+            "message": f"Unexpected error: {str(e)}"
+        })
+
 @app.route('/process_google_drive', methods=['POST'])
 @swag_from({
     'tags': ['Video Processing'],
@@ -576,6 +675,111 @@ def process_google_drive():
         thread = threading.Thread(
             target=process_video_job,
             args=(job_id, google_drive_link, timestamps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        return jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
+        }), 202
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+@app.route('/process_youtube', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Process video from YouTube',
+    'description': 'Downloads a video from YouTube at maximum resolution, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['youtube_url', 'timestamps'],
+                'properties': {
+                    'youtube_url': {
+                        'type': 'string',
+                        'description': 'YouTube video URL',
+                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                    },
+                    'timestamps': {
+                        'type': 'array',
+                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'items': {
+                            'type': 'array',
+                            'items': {'type': 'number'},
+                            'minItems': 2,
+                            'maxItems': 2
+                        },
+                        'example': [[10, 20], [30, 45], [60, 70]]
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '202': {
+            'description': 'Job accepted for processing',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'job_id': {'type': 'string'},
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'status_url': {'type': 'string'}
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
+def process_youtube():
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        youtube_url = data.get('youtube_url')
+        timestamps = data.get('timestamps')
+        
+        if not youtube_url:
+            return jsonify({"error": "No YouTube URL provided"}), 400
+        
+        if not timestamps or not isinstance(timestamps, list):
+            return jsonify({"error": "Invalid or missing timestamps"}), 400
+        
+        # Create a job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
+        
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_youtube_job,
+            args=(job_id, youtube_url, timestamps)
         )
         thread.daemon = True
         thread.start()
@@ -772,6 +976,7 @@ def index():
         "documentation": "/docs",
         "endpoints": [
             {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
+            {"path": "/process_youtube", "method": "POST", "description": "Process video from YouTube"},
             {"path": "/job/<job_id>", "method": "GET", "description": "Check job status"},
             {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
             {"path": "/download_url/<job_id>", "method": "GET", "description": "Get just the download URL for a processed video"},
