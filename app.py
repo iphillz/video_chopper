@@ -250,6 +250,19 @@ def download_from_youtube(url, destination):
     """Download a video from YouTube using yt-dlp at maximum resolution."""
     logger.info(f"Starting YouTube download: {url}")
     
+    # Try to extract video ID
+    video_id = None
+    try:
+        if "youtube.com/watch?v=" in url:
+            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        
+        if video_id:
+            logger.info(f"Extracted YouTube video ID: {video_id}")
+    except Exception as e:
+        logger.warning(f"Could not extract YouTube video ID: {str(e)}")
+    
     try:
         # Check if aria2c is available
         aria2c_available = False
@@ -260,7 +273,21 @@ def download_from_youtube(url, destination):
             logger.info(f"aria2c available: {aria2c_available}")
         except Exception:
             logger.info("Could not check for aria2c, assuming not available")
-            
+        
+        # Check multiple cookie file locations
+        cookie_files = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt')
+        ]
+        
+        cookie_file = None
+        for f in cookie_files:
+            if os.path.exists(f):
+                cookie_file = f
+                logger.info(f"Found cookie file: {f}")
+                break
+                
         # Configure yt-dlp for best quality with additional options to bypass restrictions
         ydl_opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Get best quality
@@ -278,7 +305,13 @@ def download_from_youtube(url, destination):
             'extractor_retries': 5,        # Retry extractor on error
             'socket_timeout': 30,          # Socket timeout in seconds
             'concurrent_fragment_downloads': 5,  # Download fragments in parallel
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/'
         }
+        
+        # Add cookie file if available
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
         
         # Add aria2c if available
         if aria2c_available:
@@ -287,116 +320,156 @@ def download_from_youtube(url, destination):
                 'external_downloader_args': ['--min-split-size=1M', '--max-connection-per-server=16']
             })
         
-        # Try with the best available options
+        # Track success across all methods
+        success = False
+        
+        # Method 1: Standard yt-dlp download
         try:
-            # Add cookies.txt if it exists
-            cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
-            if os.path.exists(cookies_file):
-                logger.info(f"Using cookies file: {cookies_file}")
-                ydl_opts['cookiefile'] = cookies_file
-                
+            logger.info("METHOD 1: Standard yt-dlp download")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info(f"Starting YouTube download with yt-dlp (primary method): {url}")
                 ydl.download([url])
                 
-                # Verify the download was successful
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"METHOD 1 SUCCESS: {file_size:.2f} MB")
+                return destination
+            else:
+                logger.warning("METHOD 1 FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"METHOD 1 FAILED: {str(e)}")
+        
+        # Method 2: Try with simplified format and different user agent
+        try:
+            logger.info("METHOD 2: Simplified format selection")
+            mod_opts = ydl_opts.copy()
+            mod_opts.update({
+                'format': 'best',  # Simplified format
+                'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                'referer': 'https://www.google.com/'
+            })
+            
+            with yt_dlp.YoutubeDL(mod_opts) as ydl:
+                ydl.download([url])
+                
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"METHOD 2 SUCCESS: {file_size:.2f} MB")
+                return destination
+            else:
+                logger.warning("METHOD 2 FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"METHOD 2 FAILED: {str(e)}")
+        
+        # Method 3: Try invidious API alternatives for direct links
+        if video_id:
+            try:
+                logger.info("METHOD 3: Invidious API")
+                invidious_instances = [
+                    "https://invidious.snopyta.org",
+                    "https://yewtu.be",
+                    "https://invidious.kavin.rocks",
+                    "https://inv.riverside.rocks"
+                ]
+                
+                for instance in invidious_instances:
+                    try:
+                        api_url = f"{instance}/api/v1/videos/{video_id}"
+                        logger.info(f"Trying Invidious API: {api_url}")
+                        
+                        response = requests.get(api_url, timeout=10)
+                        if response.status_code == 200:
+                            data = response.json()
+                            
+                            # Find the highest quality format
+                            formats = []
+                            if 'adaptiveFormats' in data:
+                                formats.extend(data['adaptiveFormats'])
+                            if 'formatStreams' in data:
+                                formats.extend(data['formatStreams'])
+                                
+                            if formats:
+                                # Sort by quality (height)
+                                formats.sort(key=lambda x: x.get('height', 0), reverse=True)
+                                
+                                direct_url = formats[0].get('url')
+                                if direct_url:
+                                    logger.info(f"Found direct URL from Invidious: {instance}")
+                                    
+                                    # Download with aria2c if available, otherwise curl
+                                    if aria2c_available:
+                                        cmd = f"aria2c --min-split-size=1M --max-connection-per-server=16 -x 16 -s 16 '{direct_url}' -o {destination}"
+                                    else:
+                                        cmd = f"curl -L '{direct_url}' -o {destination}"
+                                        
+                                    logger.info(f"Executing: {cmd}")
+                                    retcode = os.system(cmd)
+                                    
+                                    if retcode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                        file_size = os.path.getsize(destination) / (1024 * 1024)
+                                        logger.info(f"METHOD 3 SUCCESS: {file_size:.2f} MB")
+                                        return destination
+                    except Exception as e:
+                        logger.warning(f"Invidious API {instance} failed: {str(e)}")
+            except Exception as e:
+                logger.warning(f"METHOD 3 FAILED: {str(e)}")
+        
+        # Method 4: Try pytube
+        try:
+            logger.info("METHOD 4: pytube")
+            from pytube import YouTube
+            
+            yt = YouTube(url)
+            stream = yt.streams.get_highest_resolution()
+            stream.download(filename=destination)
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"METHOD 4 SUCCESS: {file_size:.2f} MB")
+                return destination
+            else:
+                logger.warning("METHOD 4 FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"METHOD 4 FAILED: {str(e)}")
+        
+        # Method 5: youtube-dl as last resort
+        try:
+            logger.info("METHOD 5: youtube-dl")
+            try:
+                import youtube_dl
+                ydl_opts2 = ydl_opts.copy()
+                # youtube-dl may have different options
+                if 'concurrent_fragment_downloads' in ydl_opts2:
+                    del ydl_opts2['concurrent_fragment_downloads']
+                
+                with youtube_dl.YoutubeDL(ydl_opts2) as ydl:
+                    ydl.download([url])
+                    
                 if os.path.exists(destination) and os.path.getsize(destination) > 0:
                     file_size = os.path.getsize(destination) / (1024 * 1024)
-                    logger.info(f"YouTube download successful: {destination}, size: {file_size:.2f} MB")
+                    logger.info(f"METHOD 5 SUCCESS: {file_size:.2f} MB")
                     return destination
+                else:
+                    logger.warning("METHOD 5 FAILED: Output file empty or missing")
+            except ImportError:
+                logger.warning("youtube-dl not installed, skipping")
+            except Exception as e:
+                logger.warning(f"youtube-dl failed: {str(e)}")
         except Exception as e:
-            error_msg = str(e)
-            logger.warning(f"Primary method failed: {error_msg}")
-            
-            # Check for specific errors and provide better handling
-            if "Sign in to confirm you're not a bot" in error_msg:
-                logger.warning("YouTube bot detection triggered. Trying fallback methods...")
-                
-                # Fallback method 1: Try with different user-agent
-                try:
-                    logger.info("Trying fallback method 1: Custom user-agent")
-                    ydl_opts.update({
-                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'referer': 'https://www.youtube.com/'
-                    })
-                    
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        logger.info("Trying download with custom user-agent")
-                        ydl.download([url])
-                        
-                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                            logger.info("Fallback with custom user-agent successful")
-                            return destination
-                except Exception as e2:
-                    logger.warning(f"Fallback with user-agent failed: {str(e2)}")
-                
-                # Fallback method 2: Try using pytube as an alternative
-                try:
-                    logger.info("Trying fallback method 2: pytube")
-                    from pytube import YouTube
-                    
-                    yt = YouTube(url)
-                    stream = yt.streams.get_highest_resolution()
-                    stream.download(filename=destination)
-                    
-                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                        file_size = os.path.getsize(destination) / (1024 * 1024)
-                        logger.info(f"Pytube download successful: {destination}, size: {file_size:.2f} MB")
-                        return destination
-                except Exception as e3:
-                    logger.warning(f"Pytube fallback failed: {str(e3)}")
-                
-                # Fallback method 3: Try using youtube-dl as a last resort
-                try:
-                    logger.info("Trying fallback method 3: youtube-dl")
-                    # Check if youtube-dl is installed
-                    try:
-                        import youtube_dl
-                        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                            logger.info("Trying download with youtube-dl")
-                            ydl.download([url])
-                            
-                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                                logger.info("Fallback with youtube-dl successful")
-                                return destination
-                    except ImportError:
-                        logger.warning("youtube-dl not installed, skipping this fallback")
-                    except Exception as e4:
-                        logger.warning(f"youtube-dl fallback failed: {str(e4)}")
-                except Exception as e5:
-                    logger.warning(f"Error with youtube-dl fallback: {str(e5)}")
-                
-                # If all methods fail with bot detection, raise a more specific error
-                raise Exception(
-                    "YouTube bot protection prevented download. This usually happens when too many "
-                    "requests are made in a short time. Options: 1) Try again later, "
-                    "2) Use a direct Google Drive link instead, "
-                    "3) To resolve permanently, add a cookies.txt file from an authenticated YouTube session "
-                    "to the application directory."
-                )
-            elif "This video is unavailable" in error_msg:
-                raise Exception("This YouTube video is unavailable or has been removed.")
-            elif "Video unavailable. This video contains content from" in error_msg:
-                raise Exception("This YouTube video has content restrictions or copyright claims that prevent downloading.")
-            elif "Video unavailable" in error_msg:
-                raise Exception("This YouTube video is unavailable. It may be private, deleted, or region-restricted.")
-            elif "Private video" in error_msg:
-                raise Exception("This YouTube video is private and cannot be accessed.")
-            elif "Sign in to view" in error_msg:
-                raise Exception("This YouTube video requires authentication. Please use a public video.")
-            else:
-                # Re-raise the original error
-                raise
+            logger.warning(f"METHOD 5 FAILED: {str(e)}")
         
-        # If we get here, the download wasn't verified as successful
-        if not os.path.exists(destination) or os.path.getsize(destination) == 0:
-            logger.error("YouTube download failed: File is empty or missing")
-            raise Exception("Downloaded YouTube file is empty or missing")
-        
-        return destination
+        # If all methods failed, raise a helpful error
+        raise Exception(
+            "YouTube bot protection prevented download. This could be because:\n"
+            "1. YouTube's anti-bot systems are detecting our server as automated\n"
+            "2. The video may have restricted access or require login\n\n"
+            "Solutions:\n"
+            "1. Add a cookies.txt file from an authenticated YouTube session\n"
+            "2. Try again later when YouTube's bot detection might be less strict\n"
+            "3. Use Google Drive as an alternative for your videos instead of YouTube"
+        )
     
     except Exception as e:
-        logger.error(f"YouTube download failed: {str(e)}")
+        logger.error(f"All YouTube download methods failed: {str(e)}")
         raise Exception(f"Failed to download YouTube video: {str(e)}")
 
 def process_video(input_path, timestamps, output_path):

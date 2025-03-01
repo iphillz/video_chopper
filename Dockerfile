@@ -3,6 +3,9 @@ FROM python:3.10-slim
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    aria2 \
+    curl \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -17,6 +20,9 @@ COPY app.py .
 
 # Create directory for storing processed videos
 RUN mkdir -p /app/videos
+
+# Create a directory for YouTube cookies
+RUN mkdir -p /app/auth
 
 # Expose port for Flask application
 EXPOSE 3000

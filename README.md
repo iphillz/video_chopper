@@ -47,7 +47,31 @@ The API includes interactive documentation using Swagger UI, which allows you to
 }
 ```
 
-### 2. Check Job Status
+### 2. Process YouTube Video
+
+**Endpoint:** `POST /process_youtube`
+
+**Description:** Initiates asynchronous processing of a video from YouTube by extracting segments based on specified timestamps and concatenating them.
+
+**Request Body:**
+```json
+{
+  "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "timestamps": [[10, 20], [30, 45], [60, 70]]
+}
+```
+
+**Response:**
+```json
+{
+  "job_id": "abc123-456def",
+  "status": "queued",
+  "message": "Job queued for processing",
+  "status_url": "/job/abc123-456def"
+}
+```
+
+### 3. Check Job Status
 
 **Endpoint:** `GET /job/<job_id>`
 
@@ -69,7 +93,23 @@ The API includes interactive documentation using Swagger UI, which allows you to
 - `completed`: Job has completed successfully
 - `failed`: Job has failed
 
-### 3. Download Processed Video
+### 4. Get Download URL Only
+
+**Endpoint:** `GET /download_url/<job_id>`
+
+**Description:** Returns only the download URL for a processed video as plain text.
+
+**Response (success):**
+```
+http://your-server.com/download/xyz789.mp4
+```
+
+**Other responses:**
+- `202`: "Job is processing, please check back later"
+- `404`: "Job not found"
+- `500`: "Job failed: [error message]"
+
+### 5. Download Processed Video
 
 **Endpoint:** `GET /download/<filename>`
 
@@ -77,7 +117,7 @@ The API includes interactive documentation using Swagger UI, which allows you to
 
 **Response:** The processed video file.
 
-### 4. Health Check
+### 6. Health Check
 
 **Endpoint:** `GET /health`
 
@@ -224,4 +264,39 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. 
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Troubleshooting YouTube Downloads
+
+### YouTube Bot Detection
+
+When downloading videos from YouTube, you may encounter the "Sign in to confirm you're not a bot" error. This happens because YouTube's anti-bot systems detect automated download attempts.
+
+### Solutions:
+
+1. **Add a Cookies File**
+
+   The most reliable solution is to add an authenticated cookies file from YouTube:
+
+   - Install a browser extension like "Get cookies.txt" for Chrome/Firefox
+   - Log into YouTube in your browser
+   - Use the extension to export cookies as cookies.txt
+   - Place the file in one of these locations:
+     - `/app/cookies.txt`
+     - `/app/youtube_cookies.txt`
+     - `/app/auth/cookies.txt`
+
+   Example of creating and adding cookies with Docker:
+   ```bash
+   # First, export cookies.txt from your browser
+   # Then, copy to the container
+   docker cp cookies.txt your_container_name:/app/cookies.txt
+   ```
+
+2. **Try Google Drive Instead**
+
+   If YouTube consistently blocks your downloads, consider uploading your videos to Google Drive and using the `/process_google_drive` endpoint instead, which is more reliable.
+
+3. **Rate Limiting**
+
+   YouTube may block your downloads if you make too many requests in a short time. Spread out your requests to avoid triggering bot detection. 
