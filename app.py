@@ -769,12 +769,14 @@ def browser_download_youtube(url, destination, use_undetected=True):
     
     return None
 
-def download_from_youtube(url):
+def download_from_youtube(url, destination=None):
     """
     Download a video from YouTube.
     
     Args:
         url (str): The URL of the YouTube video.
+        destination (str, optional): The path where the video should be saved.
+            If not provided, a default path will be generated.
         
     Returns:
         str: The path to the downloaded file.
@@ -798,10 +800,12 @@ def download_from_youtube(url):
         logger.warning(f"Error extracting video ID: {str(e)}")
         video_id = None
     
-    # Generate a unique filename
-    timestamp = int(time.time())
-    filename = f"{video_id}_{timestamp}.mp4" if video_id else f"youtube_{timestamp}.mp4"
-    destination = os.path.join(videos_dir, filename)
+    # If destination is not provided, generate a default one
+    if not destination:
+        # Generate a unique filename
+        timestamp = int(time.time())
+        filename = f"{video_id}_{timestamp}.mp4" if video_id else f"youtube_{timestamp}.mp4"
+        destination = os.path.join(videos_dir, filename)
     
     logger.info(f"Will download to: {destination}")
     
