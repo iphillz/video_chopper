@@ -10,6 +10,15 @@ A Python-based API for processing and editing videos from Google Drive. This API
 - Provide download links for processed videos
 - Containerized with Docker for easy deployment
 - Ready for deployment with Coolify
+- Interactive API documentation with Swagger UI
+
+## API Documentation
+
+The API includes interactive documentation using Swagger UI, which allows you to explore and test all the endpoints.
+
+- Access the documentation at `/docs/` when the server is running
+- View detailed information about request parameters and response formats
+- Test the API directly from the documentation interface
 
 ## API Endpoints
 
@@ -103,6 +112,7 @@ Example link format: `https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=shar
 6. **Access your API**
    - Once deployed, Coolify will provide a URL to access your API
    - You can now send requests to the API endpoints
+   - Access the Swagger UI documentation at `your-api-url/docs/`
 
 ### Environment Variables (Optional)
 
@@ -137,6 +147,7 @@ While no environment variables are required by default, you can customize the ap
    ```
 
 4. The API will be available at `http://localhost:5000`
+   - Access the Swagger UI documentation at `http://localhost:5000/docs/`
 
 ## Docker Usage
 
@@ -149,6 +160,10 @@ docker build -t video-clip-api .
 ```
 docker run -p 5000:5000 -d video-clip-api
 ```
+
+After running the container, you can access:
+- The API at `http://localhost:5000`
+- Swagger documentation at `http://localhost:5000/docs/`
 
 ## License
 

@@ -7,12 +7,46 @@ import requests
 import tempfile
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 import shutil
+from flasgger import Swagger, swag_from
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Configure Swagger
+swagger_config = {
+    "headers": [],
+    "specs": [
+        {
+            "endpoint": "apispec",
+            "route": "/apispec.json",
+            "rule_filter": lambda rule: True,
+            "model_filter": lambda tag: True,
+        }
+    ],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/docs/"
+}
+
+swagger_template = {
+    "info": {
+        "title": "Video Chopper API",
+        "description": "API for processing videos from Google Drive based on timestamps",
+        "contact": {
+            "responsibleOrganization": "",
+            "responsibleDeveloper": "",
+            "email": "",
+            "url": "",
+        },
+        "version": "1.0.0",
+    },
+    "schemes": ["http", "https"],
+}
+
+swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
 # Directory to store processed videos
 VIDEO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videos")
@@ -68,6 +102,71 @@ def process_video(input_path, timestamps, output_path):
     return output_path
 
 @app.route('/process_google_drive', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Process video from Google Drive',
+    'description': 'Downloads a video from Google Drive, cuts segments based on timestamps, and concatenates them',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['google_drive_link', 'timestamps'],
+                'properties': {
+                    'google_drive_link': {
+                        'type': 'string',
+                        'description': 'Shareable link to a Google Drive video',
+                        'example': 'https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing'
+                    },
+                    'timestamps': {
+                        'type': 'array',
+                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'items': {
+                            'type': 'array',
+                            'items': {'type': 'number'},
+                            'minItems': 2,
+                            'maxItems': 2
+                        },
+                        'example': [[10, 20], [30, 45], [60, 70]]
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Video processed successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'download_url': {'type': 'string'},
+                    'message': {'type': 'string'}
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        '500': {
+            'description': 'Server error',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 def process_google_drive():
     try:
         data = request.get_json()
@@ -128,6 +227,34 @@ def process_google_drive():
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 @app.route('/download/<filename>', methods=['GET'])
+@swag_from({
+    'tags': ['Video Download'],
+    'summary': 'Download processed video',
+    'description': 'Downloads a processed video file by filename',
+    'parameters': [
+        {
+            'name': 'filename',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'Name of the processed video file'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Video file'
+        },
+        '404': {
+            'description': 'File not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 def download(filename):
     """Endpoint to download a processed video file."""
     try:
@@ -137,9 +264,50 @@ def download(filename):
         return jsonify({"error": f"Error serving file: {str(e)}"}), 404
 
 @app.route('/health', methods=['GET'])
+@swag_from({
+    'tags': ['System'],
+    'summary': 'Health check',
+    'description': 'Returns the status of the API',
+    'responses': {
+        '200': {
+            'description': 'API status',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'status': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 def health_check():
     """Health check endpoint."""
     return jsonify({"status": "healthy"})
+
+@app.route('/', methods=['GET'])
+@swag_from({
+    'tags': ['System'],
+    'summary': 'API root',
+    'description': 'Redirects to the API documentation',
+    'responses': {
+        '302': {
+            'description': 'Redirect to documentation'
+        }
+    }
+})
+def index():
+    """Root endpoint, redirects to API documentation."""
+    return jsonify({
+        "name": "Video Chopper API",
+        "version": "1.0.0",
+        "documentation": "/docs/",
+        "endpoints": [
+            {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
+            {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
+            {"path": "/health", "method": "GET", "description": "Health check"},
+            {"path": "/docs/", "method": "GET", "description": "API documentation"}
+        ]
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000) 
