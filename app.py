@@ -274,20 +274,73 @@ def download_from_youtube(url, destination):
         except Exception:
             logger.info("Could not check for aria2c, assuming not available")
         
-        # Check multiple cookie file locations
+        # Check multiple cookie file locations with detailed logging
         cookie_files = [
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt')
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt'),
+            '/app/cookies.txt',
+            '/app/youtube_cookies.txt',
+            '/app/auth/cookies.txt'
         ]
+        
+        # Debug: List all files in current directory and app directory
+        try:
+            logger.info(f"Current working directory: {os.getcwd()}")
+            logger.info(f"Files in current directory: {os.listdir('.')}")
+            if os.path.exists('/app'):
+                logger.info(f"Files in /app directory: {os.listdir('/app')}")
+                if os.path.exists('/app/auth'):
+                    logger.info(f"Files in /app/auth directory: {os.listdir('/app/auth')}")
+        except Exception as e:
+            logger.warning(f"Error listing files: {str(e)}")
         
         cookie_file = None
         for f in cookie_files:
             if os.path.exists(f):
                 cookie_file = f
                 logger.info(f"Found cookie file: {f}")
-                break
                 
+                # Debug: Check cookie file content
+                try:
+                    with open(f, 'r') as cf:
+                        cookie_content = cf.read(500)  # Read first 500 chars just to verify
+                        logger.info(f"Cookie file content preview: {cookie_content[:100]}...")
+                except Exception as e:
+                    logger.warning(f"Error reading cookie file: {str(e)}")
+                
+                break
+        
+        if not cookie_file:
+            logger.warning("No cookie file found! Searched in: " + ", ".join(cookie_files))
+            
+            # Create a new cookie file with the user's cookies
+            try:
+                logger.info("Attempting to create cookie file directly")
+                fallback_cookie_path = '/tmp/youtube_cookies.txt'
+                with open(fallback_cookie_path, 'w') as f:
+                    f.write("""# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file!  Do not edit.
+
+.youtube.com	TRUE	/	TRUE	1771168478	_ym_uid	1723797499231969273
+.youtube.com	TRUE	/	TRUE	1759402779	SOCS	CAISFggDEgk2NjgyMjY4MjQaBWVuLUdCIAEaBgiAgNS2Bg
+.youtube.com	TRUE	/	TRUE	1773326670	LOGIN_INFO	AFmmF2swRQIgPpczi_UDZNsa0J56wmM3Ekomc9iv0-eR-gHbORvIh0ICIQDOr8Ju5dHD4h42tem96j-VFaRdXZxwA0vfjSsocqk2LQ:QUQ3MjNmeWlEc3laTnFma1RLd3RRUDlXdDBpTUxZRjFXNlUwZVVjem5GeUZZUmF4TDdMWHJOcm0zcHppbXdrS3NVaUxiaWgtdjYybzVBd29ITWt5SW5NNHJwS3p0cEFLaENvbjhnSXNLQWRwUFBUblJWYVdpUkRab0laNzJtN3JMcEVoR2FjQ2ZCMWpzUVd3RnpXOWMtWHpLMW1VYnRnZGl3
+.youtube.com	TRUE	/	FALSE	1775191667	SID	g.a000uQhID2xr6hbsFgSLljC5u_GRKowJM3mP-pNQuUXuDeDC4GwDuGzCctV43GPGsYpdI4jmcwACgYKAfYSARYSFQHGX2MipjKdtekBqVZFTuZ00_tzIBoVAUF8yKpMXJinb1wu33se60rmXDZQ0076
+.youtube.com	TRUE	/	TRUE	1775191667	__Secure-1PSID	g.a000uQhID2xr6hbsFgSLljC5u_GRKowJM3mP-pNQuUXuDeDC4GwDvuuA5ZQoyQHTie6SlkGvvAACgYKAVMSARYSFQHGX2Mixrvf35oilq6i6_8N5OtnxxoVAUF8yKqWeeV6xPH-MKZ_LVTWBBPN0076
+.youtube.com	TRUE	/	TRUE	1775191667	__Secure-3PSID	g.a000uQhID2xr6hbsFgSLljC5u_GRKowJM3mP-pNQuUXuDeDC4GwDMmkeUU4qDkQSkfeNAvtqnAACgYKAYsSARYSFQHGX2MiG5bgVYHNX7PjtezgSUCWBhoVAUF8yKpBW9b-Wyu9eJxs7L2kvHsW0076
+.youtube.com	TRUE	/	FALSE	1775191667	HSID	AGq1nP2iwfh43mw0I
+.youtube.com	TRUE	/	TRUE	1775191667	SSID	A2uUizbFadONvAj7Q
+.youtube.com	TRUE	/	TRUE	1775191667	SAPISID	jNsGEI0LJPGkg-wB/AZC4pLD2m1mCiybZd
+.youtube.com	TRUE	/	TRUE	1775191667	__Secure-1PAPISID	jNsGEI0LJPGkg-wB/AZC4pLD2m1mCiybZd
+.youtube.com	TRUE	/	TRUE	1775191667	__Secure-3PAPISID	jNsGEI0LJPGkg-wB/AZC4pLD2m1mCiybZd
+.youtube.com	TRUE	/	TRUE	1756381241	VISITOR_INFO1_LIVE	k5a3-3JDD78
+.youtube.com	TRUE	/	TRUE	0	YSC	V2Yp_2J6c1M""")
+                cookie_file = fallback_cookie_path
+                logger.info(f"Created fallback cookie file at {fallback_cookie_path}")
+            except Exception as e:
+                logger.warning(f"Failed to create fallback cookie file: {str(e)}")
+        
         # Configure yt-dlp for best quality with additional options to bypass restrictions
         ydl_opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Get best quality
@@ -306,12 +359,20 @@ def download_from_youtube(url, destination):
             'socket_timeout': 30,          # Socket timeout in seconds
             'concurrent_fragment_downloads': 5,  # Download fragments in parallel
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/'
+            'referer': 'https://www.youtube.com/',
+            'debug_printtraffic': True,     # Print all sent and received HTTP traffic
+            'http_headers': {               # Custom HTTP headers
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate'
+            }
         }
         
         # Add cookie file if available
         if cookie_file:
             ydl_opts['cookiefile'] = cookie_file
+            ydl_opts['cookiesfrombrowser'] = None  # Don't try to get cookies from browser
         
         # Add aria2c if available
         if aria2c_available:
@@ -322,6 +383,32 @@ def download_from_youtube(url, destination):
         
         # Track success across all methods
         success = False
+        
+        # Try a direct approach with the most recent yt-dlp version
+        try:
+            logger.info("DIRECT METHOD: Using direct yt-dlp with cookies")
+            
+            import sys
+            # Print yt-dlp version for debugging
+            try:
+                import yt_dlp
+                logger.info(f"yt-dlp version: {yt_dlp.version.__version__}")
+            except Exception as e:
+                logger.warning(f"Could not get yt-dlp version: {str(e)}")
+            
+            direct_destination = destination
+            direct_cmd = f"yt-dlp -v --cookies={cookie_file} -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{direct_destination}'"
+            logger.info(f"Executing direct command: {direct_cmd}")
+            os.system(direct_cmd)
+            
+            if os.path.exists(direct_destination) and os.path.getsize(direct_destination) > 0:
+                file_size = os.path.getsize(direct_destination) / (1024 * 1024)
+                logger.info(f"DIRECT METHOD SUCCESS: {file_size:.2f} MB")
+                return direct_destination
+            else:
+                logger.warning("DIRECT METHOD FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"DIRECT METHOD FAILED: {str(e)}")
         
         # Method 1: Standard yt-dlp download
         try:
@@ -360,69 +447,48 @@ def download_from_youtube(url, destination):
         except Exception as e:
             logger.warning(f"METHOD 2 FAILED: {str(e)}")
         
-        # Method 3: Try invidious API alternatives for direct links
-        if video_id:
-            try:
-                logger.info("METHOD 3: Invidious API")
-                invidious_instances = [
-                    "https://invidious.snopyta.org",
-                    "https://yewtu.be",
-                    "https://invidious.kavin.rocks",
-                    "https://inv.riverside.rocks"
-                ]
-                
-                for instance in invidious_instances:
-                    try:
-                        api_url = f"{instance}/api/v1/videos/{video_id}"
-                        logger.info(f"Trying Invidious API: {api_url}")
-                        
-                        response = requests.get(api_url, timeout=10)
-                        if response.status_code == 200:
-                            data = response.json()
-                            
-                            # Find the highest quality format
-                            formats = []
-                            if 'adaptiveFormats' in data:
-                                formats.extend(data['adaptiveFormats'])
-                            if 'formatStreams' in data:
-                                formats.extend(data['formatStreams'])
-                                
-                            if formats:
-                                # Sort by quality (height)
-                                formats.sort(key=lambda x: x.get('height', 0), reverse=True)
-                                
-                                direct_url = formats[0].get('url')
-                                if direct_url:
-                                    logger.info(f"Found direct URL from Invidious: {instance}")
-                                    
-                                    # Download with aria2c if available, otherwise curl
-                                    if aria2c_available:
-                                        cmd = f"aria2c --min-split-size=1M --max-connection-per-server=16 -x 16 -s 16 '{direct_url}' -o {destination}"
-                                    else:
-                                        cmd = f"curl -L '{direct_url}' -o {destination}"
-                                        
-                                    logger.info(f"Executing: {cmd}")
-                                    retcode = os.system(cmd)
-                                    
-                                    if retcode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
-                                        file_size = os.path.getsize(destination) / (1024 * 1024)
-                                        logger.info(f"METHOD 3 SUCCESS: {file_size:.2f} MB")
-                                        return destination
-                    except Exception as e:
-                        logger.warning(f"Invidious API {instance} failed: {str(e)}")
-            except Exception as e:
-                logger.warning(f"METHOD 3 FAILED: {str(e)}")
-        
-        # Method 4: Try pytube
+        # Method 3: Use youtube-dl format directly
         try:
-            logger.info("METHOD 4: pytube")
-            from pytube import YouTube
+            logger.info("METHOD 3: youtube-dl format")
+            ytdl_destination = destination + ".ytdl"
             
-            yt = YouTube(url)
-            stream = yt.streams.get_highest_resolution()
-            stream.download(filename=destination)
+            # Create a simplified options dict for yt-dlp
+            simple_opts = {
+                'format': 'best',
+                'outtmpl': ytdl_destination,
+                'noplaylist': True,
+                'cookiefile': cookie_file,
+                'quiet': False,
+                'no_warnings': False
+            }
             
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+            with yt_dlp.YoutubeDL(simple_opts) as ydl:
+                ydl.download([url])
+                
+            if os.path.exists(ytdl_destination) and os.path.getsize(ytdl_destination) > 0:
+                # Rename the file to the expected destination
+                os.rename(ytdl_destination, destination)
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"METHOD 3 SUCCESS: {file_size:.2f} MB")
+                return destination
+            else:
+                logger.warning("METHOD 3 FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"METHOD 3 FAILED: {str(e)}")
+            
+        # Method 4: Use ffmpeg directly with youtube-dl
+        try:
+            logger.info("METHOD 4: ffmpeg with youtube-dl")
+            ffmpeg_destination = destination + ".ffmpeg"
+            
+            # Use system command for youtube-dl with ffmpeg
+            cmd = f"youtube-dl --cookies {cookie_file} -f best -o {ffmpeg_destination} {url}"
+            logger.info(f"Executing command: {cmd}")
+            os.system(cmd)
+            
+            if os.path.exists(ffmpeg_destination) and os.path.getsize(ffmpeg_destination) > 0:
+                # Rename the file to the expected destination
+                os.rename(ffmpeg_destination, destination)
                 file_size = os.path.getsize(destination) / (1024 * 1024)
                 logger.info(f"METHOD 4 SUCCESS: {file_size:.2f} MB")
                 return destination
@@ -431,31 +497,116 @@ def download_from_youtube(url, destination):
         except Exception as e:
             logger.warning(f"METHOD 4 FAILED: {str(e)}")
         
-        # Method 5: youtube-dl as last resort
+        # Method 5: Use curl with a direct video link if we can find one
         try:
-            logger.info("METHOD 5: youtube-dl")
-            try:
-                import youtube_dl
-                ydl_opts2 = ydl_opts.copy()
-                # youtube-dl may have different options
-                if 'concurrent_fragment_downloads' in ydl_opts2:
-                    del ydl_opts2['concurrent_fragment_downloads']
+            logger.info("METHOD 5: curl with direct youtube link")
+            if not video_id:
+                logger.warning("METHOD 5 FAILED: No video ID available")
+            else:
+                # Try to get a direct video URL using a minimal query to YouTube
+                curl_cmd = f"curl -s -L -A 'Mozilla/5.0' --cookie-jar /tmp/yt_cookies.txt 'https://www.youtube.com/watch?v={video_id}' | grep -o 'https://[^\"]*videoplayback[^\"]*'"
+                logger.info(f"Running extraction command: {curl_cmd}")
                 
-                with youtube_dl.YoutubeDL(ydl_opts2) as ydl:
-                    ydl.download([url])
+                import subprocess
+                result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True)
+                
+                if result.stdout.strip():
+                    direct_urls = result.stdout.strip().split('\n')
+                    logger.info(f"Found {len(direct_urls)} potential direct URLs")
                     
-                if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                    file_size = os.path.getsize(destination) / (1024 * 1024)
-                    logger.info(f"METHOD 5 SUCCESS: {file_size:.2f} MB")
-                    return destination
+                    for i, direct_url in enumerate(direct_urls):
+                        # Clean up the URL
+                        direct_url = direct_url.replace('\\u0026', '&')
+                        curl_dest = f"{destination}.curl{i}"
+                        
+                        curl_download_cmd = f"curl -L -A 'Mozilla/5.0' --cookie /tmp/yt_cookies.txt '{direct_url}' -o {curl_dest}"
+                        logger.info(f"Trying direct download: {curl_download_cmd}")
+                        os.system(curl_download_cmd)
+                        
+                        if os.path.exists(curl_dest) and os.path.getsize(curl_dest) > 1024 * 1024:  # At least 1MB
+                            os.rename(curl_dest, destination)
+                            file_size = os.path.getsize(destination) / (1024 * 1024)
+                            logger.info(f"METHOD 5 SUCCESS: {file_size:.2f} MB")
+                            return destination
+                        else:
+                            logger.warning(f"Direct URL {i} download failed or too small")
                 else:
-                    logger.warning("METHOD 5 FAILED: Output file empty or missing")
-            except ImportError:
-                logger.warning("youtube-dl not installed, skipping")
-            except Exception as e:
-                logger.warning(f"youtube-dl failed: {str(e)}")
+                    logger.warning("No direct URLs found in YouTube page")
         except Exception as e:
             logger.warning(f"METHOD 5 FAILED: {str(e)}")
+        
+        # Method 6: Last resort - try a completely different approach with pytube
+        try:
+            logger.info("METHOD 6: pytube")
+            # Get cookies into a format pytube can use
+            if cookie_file:
+                # Export cookies to environment variable
+                os.environ["COOKIE_FILE"] = cookie_file
+            
+            from pytube import YouTube
+            
+            # Monkey patch the pytube to use our cookies if needed
+            try:
+                import pytube.request
+                original_get = pytube.request.get
+                
+                def patched_get(*args, **kwargs):
+                    # Add cookie header if available
+                    if "cookies" not in kwargs and cookie_file:
+                        try:
+                            with open(cookie_file, 'r') as f:
+                                cookies_content = f.read()
+                                
+                            # Extract SID and HSID cookies
+                            sid_match = re.search(r'SID\s+(\S+)', cookies_content)
+                            hsid_match = re.search(r'HSID\s+(\S+)', cookies_content)
+                            
+                            cookie_header = ""
+                            if sid_match:
+                                cookie_header += f"SID={sid_match.group(1)}; "
+                            if hsid_match:
+                                cookie_header += f"HSID={hsid_match.group(1)}; "
+                                
+                            if cookie_header and "headers" in kwargs:
+                                kwargs["headers"]["Cookie"] = cookie_header
+                        except Exception as e:
+                            logger.warning(f"Error setting cookies for pytube: {str(e)}")
+                    
+                    return original_get(*args, **kwargs)
+                
+                pytube.request.get = patched_get
+            except Exception as e:
+                logger.warning(f"Could not patch pytube: {str(e)}")
+            
+            yt = YouTube(url)
+            stream = yt.streams.get_highest_resolution()
+            stream.download(filename=destination)
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"METHOD 6 SUCCESS: {file_size:.2f} MB")
+                return destination
+            else:
+                logger.warning("METHOD 6 FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"METHOD 6 FAILED: {str(e)}")
+        
+        # If all methods failed, try one last low-quality fallback
+        try:
+            logger.info("FALLBACK METHOD: Low quality direct approach")
+            
+            fallback_cmd = f"yt-dlp -f 'worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst' '{url}' -o '{destination}'"
+            logger.info(f"Executing fallback command: {fallback_cmd}")
+            os.system(fallback_cmd)
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                file_size = os.path.getsize(destination) / (1024 * 1024)
+                logger.info(f"FALLBACK METHOD SUCCESS: {file_size:.2f} MB (Low quality)")
+                return destination
+            else:
+                logger.warning("FALLBACK METHOD FAILED: Output file empty or missing")
+        except Exception as e:
+            logger.warning(f"FALLBACK METHOD FAILED: {str(e)}")
         
         # If all methods failed, raise a helpful error
         raise Exception(
