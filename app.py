@@ -685,6 +685,63 @@ def download(filename):
         logger.error(f"Error serving file: {str(e)}")
         return jsonify({"error": f"Error serving file: {str(e)}"}), 404
 
+@app.route('/download_url/<job_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Video Download'],
+    'summary': 'Get just the download URL for a processed video',
+    'description': 'Returns only the direct download URL for a completed job',
+    'parameters': [
+        {
+            'name': 'job_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'ID of the job'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Download URL',
+            'schema': {
+                'type': 'string'
+            }
+        },
+        '202': {
+            'description': 'Job is still processing',
+            'schema': {
+                'type': 'string'
+            }
+        },
+        '404': {
+            'description': 'Job not found',
+            'schema': {
+                'type': 'string'
+            }
+        },
+        '500': {
+            'description': 'Job failed',
+            'schema': {
+                'type': 'string'
+            }
+        }
+    }
+})
+def download_url(job_id):
+    """Endpoint to get just the download URL for a completed job."""
+    if job_id not in jobs:
+        return "Job not found", 404
+    
+    job = jobs[job_id]
+    
+    if job["status"] == "completed" and "download_url" in job:
+        # Return just the URL as plain text for easy integration
+        return job["download_url"]
+    elif job["status"] == "failed":
+        return f"Job failed: {job.get('message', 'Unknown error')}", 500
+    else:
+        # Job is still processing
+        return f"Job is {job['status']}, please check back later", 202
+
 @app.route('/health', methods=['GET'])
 @swag_from({
     'tags': ['System'],
@@ -717,6 +774,7 @@ def index():
             {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
             {"path": "/job/<job_id>", "method": "GET", "description": "Check job status"},
             {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
+            {"path": "/download_url/<job_id>", "method": "GET", "description": "Get just the download URL for a processed video"},
             {"path": "/health", "method": "GET", "description": "Health check"},
             {"path": "/docs", "method": "GET", "description": "API documentation"}
         ]
