@@ -1,7 +1,7 @@
-Flask==2.3.3
+Flask==2.0.3
 moviepy==1.0.3
 yt-dlp==2023.7.6
 requests==2.31.0
-Werkzeug==2.3.7
+Werkzeug==2.0.3
 gunicorn==21.2.0
 flasgger==0.9.5 
