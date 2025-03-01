@@ -5,6 +5,7 @@ A Python-based API for processing and editing videos from Google Drive. This API
 ## Features
 
 - Download videos from Google Drive
+- Download and process videos from YouTube (with authenticated cookies)
 - Process videos by cutting segments based on timestamps
 - Concatenate video segments into a single output file
 - Provide download links for processed videos
@@ -12,6 +13,17 @@ A Python-based API for processing and editing videos from Google Drive. This API
 - Ready for deployment with Coolify
 - Interactive API documentation with Swagger UI
 - Asynchronous video processing to handle long operations
+
+## 🔴 YouTube Downloads Work With Included Cookies
+
+This repository now includes authenticated YouTube cookies that solve the bot detection issue. The cookies are in the following locations:
+- `cookies.txt` (root directory)
+- `youtube_cookies.txt` (root directory)
+- `auth/cookies.txt` (auth subdirectory)
+
+The downloader will automatically use these cookies when downloading from YouTube, providing a seamless experience without encountering the "Sign in to confirm you're not a bot" error.
+
+**Note**: These cookies will expire in the future (mid-2025) and may need to be refreshed.
 
 ## API Documentation
 
@@ -274,14 +286,18 @@ When downloading videos from YouTube, you may encounter the "Sign in to confirm 
 
 ### Solutions:
 
-1. **Add a Cookies File**
+1. **Use the Included Cookies**
 
-   The most reliable solution is to add an authenticated cookies file from YouTube:
+   This repository already includes authenticated cookie files that should solve most bot detection issues. The downloader will automatically use these files to authenticate with YouTube.
+
+2. **Add Your Own Cookies File**
+
+   If the included cookies expire or don't work for some reason:
 
    - Install a browser extension like "Get cookies.txt" for Chrome/Firefox
    - Log into YouTube in your browser
    - Use the extension to export cookies as cookies.txt
-   - Place the file in one of these locations:
+   - Replace one of these files:
      - `/app/cookies.txt`
      - `/app/youtube_cookies.txt`
      - `/app/auth/cookies.txt`
@@ -293,10 +309,10 @@ When downloading videos from YouTube, you may encounter the "Sign in to confirm 
    docker cp cookies.txt your_container_name:/app/cookies.txt
    ```
 
-2. **Try Google Drive Instead**
+3. **Try Google Drive Instead**
 
    If YouTube consistently blocks your downloads, consider uploading your videos to Google Drive and using the `/process_google_drive` endpoint instead, which is more reliable.
 
-3. **Rate Limiting**
+4. **Rate Limiting**
 
    YouTube may block your downloads if you make too many requests in a short time. Spread out your requests to avoid triggering bot detection. 
