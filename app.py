@@ -85,96 +85,338 @@ def extract_file_id(google_drive_link):
     raise ValueError("Invalid Google Drive link format")
 
 def download_from_google_drive(url, destination):
-    """Download a file from Google Drive using direct download link."""
+    """Download a file from Google Drive using more reliable methods."""
     try:
         # Extract file ID from the URL
         file_id = extract_file_id(url)
         logger.info(f"Extracted file ID: {file_id}")
         
-        # Create direct download URL
-        direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        logger.info(f"Using direct download URL: {direct_url}")
-        
-        # For larger files, Google might show a confirmation page
-        # We need to handle that with a session
-        session = requests.Session()
-        
-        # First request to get confirmation token if needed
-        response = session.get(direct_url, stream=True)
-        token = None
-        
-        # Check if there's a download confirmation page
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                token = value
-                logger.info("Received download confirmation token")
-                break
-        
-        # If we have a token, we need to confirm the download
-        if token:
-            direct_url = f"{direct_url}&confirm={token}"
-            logger.info(f"Using confirmed download URL: {direct_url}")
-        
-        # Download the file
-        response = session.get(direct_url, stream=True)
-        
-        # Save the file
-        with open(destination, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=1024*1024):  # 1MB chunks
-                if chunk:
-                    f.write(chunk)
-        
-        # Verify file was downloaded
-        if os.path.getsize(destination) == 0:
-            raise Exception("Downloaded file is empty")
+        # First attempt: Try with the direct usercontent.google.com URL (this often works for large files)
+        logger.info("Trying direct usercontent.google.com download...")
+        try:
+            direct_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm=t"
+            logger.info(f"Using usercontent direct URL: {direct_url}")
             
-        logger.info(f"Download complete: {destination}")
-        return destination
+            # Use a session to maintain cookies
+            session = requests.Session()
+            response = session.get(direct_url, stream=True, timeout=120)
+            
+            # Download with progress tracking
+            total_size = int(response.headers.get('content-length', 0) or 0)
+            logger.info(f"Starting direct download, expected size: {total_size/1024/1024:.2f} MB")
+            
+            downloaded = 0
+            with open(destination, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        # Log progress for large files
+                        if downloaded % (10 * 1024 * 1024) == 0:  # Log every 10MB
+                            logger.info(f"Downloaded {downloaded/1024/1024:.2f} MB")
+            
+            # Verify download was successful
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"Direct usercontent download successful: {destination}, size: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("Direct usercontent download completed but file is empty or missing")
+        except Exception as direct_error:
+            logger.warning(f"Direct usercontent download failed: {str(direct_error)}")
         
-    except Exception as e:
-        logger.error(f"Download error: {str(e)}")
-        # If direct download fails, try with yt-dlp as a fallback
-        logger.info("Trying fallback download method with yt-dlp")
-        
+        # Second attempt: Use yt-dlp as it's more reliable for Google Drive
+        logger.info(f"Attempting download with yt-dlp: {url}")
         try:
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'best/bestvideo+bestaudio',
                 'outtmpl': destination,
                 'noplaylist': True,
-                'quiet': True,
-                'no_warnings': True,
+                'quiet': False,
+                'no_warnings': False,
+                'verbose': True,  # Enable verbose output for debugging
+                'retries': 10,    # Increase retry attempts
+                'fragment_retries': 10,
+                'skip_download': False,
+                'continuedl': True  # Continue partial downloads
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
                 
-            if os.path.getsize(destination) == 0:
-                raise Exception("Downloaded file is empty")
-                
-            logger.info(f"Fallback download complete: {destination}")
-            return destination
-        except Exception as fallback_error:
-            raise Exception(f"Both download methods failed. Original error: {str(e)}. Fallback error: {str(fallback_error)}")
+            # Verify download was successful
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"yt-dlp download successful: {destination}, size: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("yt-dlp download completed but file is empty or missing")
+        except Exception as ydl_error:
+            logger.warning(f"yt-dlp download failed: {str(ydl_error)}")
+        
+        # Third attempt: Handle the virus scan confirmation page
+        logger.info("Trying download with virus scan confirmation handling...")
+        
+        # Create session for maintaining cookies
+        session = requests.Session()
+        
+        # First get the confirmation token
+        confirm_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        response = session.get(confirm_url, stream=True, timeout=60)
+        
+        # Look for both download_warning cookie and confirmation token in HTML
+        token = None
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                token = value
+                logger.info(f"Found download_warning cookie: {token}")
+                break
+        
+        # If no cookie token found, try to find it in the HTML
+        if not token and 'confirm=' in response.text:
+            try:
+                token = re.search(r'confirm=([0-9A-Za-z_-]+)', response.text).group(1)
+                logger.info(f"Found confirmation token in HTML: {token}")
+            except:
+                logger.warning("Could not find confirmation token in HTML")
+        
+        # If we have a token, use it to confirm the download
+        if token:
+            # Try multiple URL formats
+            urls_to_try = [
+                f"https://drive.google.com/uc?export=download&confirm={token}&id={file_id}",
+                f"https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm={token}"
+            ]
+            
+            for dl_url in urls_to_try:
+                try:
+                    logger.info(f"Trying confirmed URL: {dl_url}")
+                    response = session.get(dl_url, stream=True, timeout=120)
+                    
+                    # Check if we got actual file content rather than another confirmation page
+                    if 'Content-Disposition' in response.headers:
+                        # This header indicates we're getting file data
+                        content_disposition = response.headers.get('Content-Disposition', '')
+                        logger.info(f"Got Content-Disposition: {content_disposition}")
+                        
+                        # Download with progress tracking
+                        total_size = int(response.headers.get('content-length', 0) or 0)
+                        logger.info(f"Starting confirmed download, size: {total_size/1024/1024:.2f} MB")
+                        
+                        downloaded = 0
+                        with open(destination, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    if downloaded % (10 * 1024 * 1024) == 0:  # Log every 10MB
+                                        logger.info(f"Downloaded {downloaded/1024/1024:.2f} MB")
+                        
+                        # Verify file exists and has content
+                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                            logger.info(f"Confirmed download complete: {destination}, size: {os.path.getsize(destination)} bytes")
+                            return destination
+                    else:
+                        logger.warning(f"Response doesn't appear to be file data for URL: {dl_url}")
+                except Exception as url_error:
+                    logger.warning(f"Error with URL {dl_url}: {str(url_error)}")
+        
+        # Fourth attempt: Using curl as a final fallback with the usercontent URL
+        logger.info("Trying final fallback with curl command...")
+        try:
+            # Use curl command for download - often works when other methods fail
+            temp_output = f"{destination}.tmp"
+            curl_cmd = f"curl -L 'https://drive.usercontent.google.com/download?id={file_id}&export=download&authuser=0&confirm=t' -o {temp_output}"
+            
+            # Execute curl
+            logger.info(f"Executing: {curl_cmd}")
+            os.system(curl_cmd)
+            
+            # If file exists, rename it
+            if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+                os.rename(temp_output, destination)
+                logger.info(f"Curl download successful: {destination}, size: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.error("Curl download failed or produced empty file")
+                raise Exception("Curl download failed")
+        except Exception as curl_error:
+            logger.error(f"Curl fallback failed: {str(curl_error)}")
+            raise Exception(f"All download methods failed. Final error: {str(curl_error)}")
+            
+    except Exception as e:
+        logger.error(f"All download methods failed: {str(e)}")
+        raise Exception(f"Failed to download file from Google Drive: {str(e)}")
 
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
     logger.info(f"Opening video file: {input_path}")
-    video = VideoFileClip(input_path)
-    clips = []
     
-    for start, end in timestamps:
-        logger.info(f"Creating clip from {start}s to {end}s")
-        clip = video.subclip(start, end)
-        clips.append(clip)
+    # First, check if the video has audio using ffmpeg directly
+    has_audio = False
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['ffmpeg', '-i', input_path, '-f', 'null', '-'],
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if "Audio" in result.stderr:
+            has_audio = True
+            logger.info("Input file has audio track detected by FFmpeg")
+        else:
+            logger.warning("No audio track detected in input file")
+    except Exception as e:
+        logger.warning(f"Could not verify audio in input: {str(e)}")
     
-    final_clip = concatenate_videoclips(clips) if clips else None
-    if final_clip:
-        logger.info(f"Writing final video to: {output_path}")
-        final_clip.write_videofile(output_path)
-        final_clip.close()
+    try:
+        # Try to extract just the audio first if it exists
+        audio_track = None
+        if has_audio:
+            try:
+                temp_audio = tempfile.mktemp(suffix='.m4a')
+                os.system(f"ffmpeg -i {input_path} -vn -acodec copy {temp_audio}")
+                if os.path.exists(temp_audio) and os.path.getsize(temp_audio) > 0:
+                    from moviepy.audio.io.AudioFileClip import AudioFileClip
+                    audio_track = AudioFileClip(temp_audio)
+                    logger.info(f"Extracted audio track, duration: {audio_track.duration}s")
+            except Exception as e:
+                logger.warning(f"Could not extract audio track: {str(e)}")
+        
+        # Open video with explicit audio setting
+        video = VideoFileClip(input_path, audio=True)
+        logger.info(f"Video loaded: duration={video.duration}s, size={video.size}, fps={video.fps}, has_audio={video.audio is not None}")
+        
+        # If MoviePy didn't detect audio but we extracted it, use our extracted audio
+        if video.audio is None and audio_track is not None:
+            video.audio = audio_track
+            logger.info("Applied separately extracted audio track to the video")
+        
+        # Create clips
+        clips = []
+        for start, end in timestamps:
+            logger.info(f"Creating clip from {start}s to {end}s")
+            
+            # Create subclip
+            clip = video.subclip(start, end)
+            
+            # Ensure audio is present in the clip
+            if clip.audio is None and video.audio is not None:
+                # If original has audio but clip doesn't, try to manually extract audio segment
+                logger.warning(f"Audio missing in clip, trying to manually add audio from {start}s to {end}s")
+                try:
+                    audio_segment = video.audio.subclip(start, end)
+                    clip.audio = audio_segment
+                except Exception as e:
+                    logger.warning(f"Failed to add audio segment: {str(e)}")
+            
+            clips.append(clip)
+        
+        if not clips:
+            logger.warning("No clips were created")
+            raise Exception("No valid clips to concatenate")
+        
+        logger.info(f"Concatenating {len(clips)} clips")
+        
+        # Use the method with explicit audio handling
+        final_clip = concatenate_videoclips(clips, method="compose")
+        
+        # Verify audio in final clip
+        if final_clip.audio is None and has_audio:
+            logger.warning("Audio was lost during concatenation, trying alternative method")
+            # Try another concatenation method
+            try:
+                final_clip = concatenate_videoclips(clips, method="chain")
+            except Exception as e:
+                logger.warning(f"Alternative concatenation failed: {str(e)}")
+        
+        if final_clip:
+            logger.info(f"Writing final video to: {output_path}")
+            
+            # Use high quality settings and ensure audio is included
+            final_clip.write_videofile(
+                output_path,
+                codec='libx264',      # Standard high-quality video codec
+                audio_codec='aac',    # Standard high-quality audio codec
+                bitrate='8000k',      # High bitrate for good quality
+                audio_bitrate='320k', # High audio bitrate
+                fps=None,             # Maintain original FPS
+                preset='medium',      # Balance between quality and processing time
+                threads=2,            # Use multiple threads
+                write_logfile=True    # Enable logging for debugging
+            )
+            
+            # Close final clip
+            final_clip.close()
+        
+        # Close the original video
+        video.close()
+        
+        # Clean up temp files
+        if audio_track is not None:
+            audio_track.close()
+            if os.path.exists(temp_audio):
+                os.remove(temp_audio)
+        
+        # Verify the output file has audio
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-i', output_path, '-f', 'null', '-'],
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if "Audio" in result.stderr:
+                logger.info("Output file has audio track verified by FFmpeg")
+            else:
+                logger.warning("No audio track detected in output file by FFmpeg")
+                
+                # If no audio detected in output but input had audio, try one more approach
+                if has_audio:
+                    logger.info("Attempting direct FFmpeg processing as fallback")
+                    # Create a list of segment files
+                    segments = []
+                    for i, (start, end) in enumerate(timestamps):
+                        segment = f"/tmp/segment_{i}.mp4"
+                        segments.append(segment)
+                        duration = end - start
+                        cmd = f'ffmpeg -ss {start} -i {input_path} -t {duration} -c copy {segment}'
+                        logger.info(f"Executing: {cmd}")
+                        os.system(cmd)
+                    
+                    # Create a file list for concatenation
+                    with open('/tmp/segments.txt', 'w') as f:
+                        for segment in segments:
+                            f.write(f"file '{segment}'\n")
+                    
+                    # Concatenate using FFmpeg
+                    concat_cmd = f'ffmpeg -f concat -safe 0 -i /tmp/segments.txt -c copy {output_path}'
+                    logger.info(f"Executing concat: {concat_cmd}")
+                    os.system(concat_cmd)
+                    
+                    # Clean up segment files
+                    for segment in segments:
+                        if os.path.exists(segment):
+                            os.remove(segment)
+                    if os.path.exists('/tmp/segments.txt'):
+                        os.remove('/tmp/segments.txt')
+                    
+                    # Verify final output
+                    result = subprocess.run(
+                        ['ffmpeg', '-i', output_path, '-f', 'null', '-'],
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+                    if "Audio" in result.stderr:
+                        logger.info("FFmpeg fallback: Output file has audio track")
+                    else:
+                        logger.warning("FFmpeg fallback: Still no audio track detected in output file")
+            
+        except Exception as e:
+            logger.warning(f"Could not verify audio in output: {str(e)}")
+        
+        return output_path
     
-    video.close()
-    return output_path
+    except Exception as e:
+        logger.error(f"Error in video processing: {str(e)}")
+        raise Exception(f"Failed to process video: {str(e)}")
 
 def process_video_job(job_id, google_drive_link, timestamps):
     """Background job to process a video."""
@@ -214,8 +456,11 @@ def process_video_job(job_id, google_drive_link, timestamps):
             logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
             process_video(input_file, timestamps, output_path)
             
-            # Generate download URL
-            download_url = f"/download/{output_filename}"
+            # Generate download URL - use full URL including hostname
+            # Get the server name from request context or use environment variable
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            protocol = os.environ.get('PROTOCOL', 'http')
+            download_url = f"{protocol}://{server_name}/download/{output_filename}"
             
             # Update job status to complete
             jobs[job_id].update({
