@@ -2,7 +2,7 @@ import os
 import re
 import uuid
 import logging
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, redirect
 import requests
 import tempfile
 from moviepy.editor import VideoFileClip, concatenate_videoclips
@@ -28,7 +28,12 @@ swagger_config = {
     ],
     "static_url_path": "/flasgger_static",
     "swagger_ui": True,
-    "specs_route": "/docs/"
+    "specs_route": "/docs",  # Removed trailing slash
+    "url_prefix": "",  # Add empty URL prefix
+    "swagger_ui_bundle_js": "//unpkg.com/swagger-ui-dist@3/swagger-ui-bundle.js",  # Use CDN
+    "swagger_ui_standalone_preset_js": "//unpkg.com/swagger-ui-dist@3/swagger-ui-standalone-preset.js",  # Use CDN
+    "swagger_ui_css": "//unpkg.com/swagger-ui-dist@3/swagger-ui.css",  # Use CDN
+    "uiversion": 3,  # Use UI version 3
 }
 
 swagger_template = {
@@ -44,6 +49,8 @@ swagger_template = {
         "version": "1.0.0",
     },
     "schemes": ["http", "https"],
+    "host": "",  # Let Swagger figure out host
+    "basePath": "/",  # Set base path to root
 }
 
 swagger = Swagger(app, config=swagger_config, template=swagger_template)
@@ -285,29 +292,25 @@ def health_check():
     return jsonify({"status": "healthy"})
 
 @app.route('/', methods=['GET'])
-@swag_from({
-    'tags': ['System'],
-    'summary': 'API root',
-    'description': 'Redirects to the API documentation',
-    'responses': {
-        '302': {
-            'description': 'Redirect to documentation'
-        }
-    }
-})
 def index():
     """Root endpoint, redirects to API documentation."""
     return jsonify({
         "name": "Video Chopper API",
         "version": "1.0.0",
-        "documentation": "/docs/",
+        "documentation": "/docs",
         "endpoints": [
             {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
             {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
             {"path": "/health", "method": "GET", "description": "Health check"},
-            {"path": "/docs/", "method": "GET", "description": "API documentation"}
+            {"path": "/docs", "method": "GET", "description": "API documentation"}
         ]
     })
 
+# Add a simple route that redirects to /docs
+@app.route('/swagger', methods=['GET'])
+def swagger_ui():
+    return redirect('/docs', code=302)
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000) 
+    # Use gunicorn-compatible settings
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000))) 
