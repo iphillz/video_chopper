@@ -276,11 +276,45 @@ def browser_download_youtube(url, destination, use_undetected=True):
     Download YouTube videos using browser automation to bypass bot detection.
     This approach is more reliable but requires Chrome/Chromium to be installed.
     """
+    logger.info(f"BROWSER METHOD: Starting browser-based download for {url}")
+    
     if not SELENIUM_AVAILABLE:
-        logger.warning("Selenium not available for browser download")
+        logger.error("BROWSER METHOD: Selenium not available - make sure selenium is installed")
         return None
 
     try:
+        # Create a directory for logs and screenshots
+        logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        
+        # Save debug info
+        debug_log = os.path.join(logs_dir, f'browser_download_{time.strftime("%Y%m%d_%H%M%S")}.log')
+        
+        with open(debug_log, 'w') as f:
+            f.write(f"Starting browser download for {url}\n")
+            f.write(f"Destination: {destination}\n")
+            f.write(f"Selenium available: {SELENIUM_AVAILABLE}\n")
+            f.write(f"Undetected ChromeDriver available: {UC_AVAILABLE}\n")
+            f.write(f"DISPLAY env: {os.environ.get('DISPLAY')}\n")
+            f.write(f"Chrome path: {os.environ.get('CHROME_BIN')}\n")
+            
+            # Check Chrome installation
+            try:
+                chrome_version = subprocess.check_output(['google-chrome', '--version']).decode().strip()
+                f.write(f"Chrome version: {chrome_version}\n")
+            except Exception as e:
+                f.write(f"Error checking Chrome version: {str(e)}\n")
+            
+            # Check Xvfb
+            try:
+                xvfb_check = subprocess.check_output(['ps', 'aux']).decode()
+                if 'Xvfb' in xvfb_check:
+                    f.write("Xvfb is running\n")
+                else:
+                    f.write("WARNING: Xvfb is not running\n")
+            except Exception as e:
+                f.write(f"Error checking Xvfb: {str(e)}\n")
+        
         # Extract video ID for direct m3u8 URL extraction
         video_id = None
         if "youtube.com/watch?v=" in url:
@@ -289,372 +323,33 @@ def browser_download_youtube(url, destination, use_undetected=True):
             video_id = url.split("youtu.be/")[1].split("?")[0]
         
         if not video_id:
-            logger.warning("Could not extract video ID from URL")
+            logger.error("BROWSER METHOD: Could not extract video ID from URL")
             return None
             
-        logger.info(f"Browser downloading YouTube video ID: {video_id}")
+        logger.info(f"BROWSER METHOD: Downloading YouTube video ID: {video_id}")
         
-        # Try undetected-chromedriver first (better at evading detection)
-        if UC_AVAILABLE and use_undetected:
-            try:
-                logger.info("Using undetected-chromedriver for stealth download")
-                
-                # Setup Chrome options
-                chrome_options = uc.ChromeOptions()
-                chrome_options.add_argument("--headless")
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--disable-dev-shm-usage")
-                chrome_options.add_argument("--disable-gpu")
-                
-                # Load cookie file if available
-                cookie_files = [
-                    '/app/cookies.txt',
-                    '/app/youtube_cookies.txt',
-                    '/app/auth/cookies.txt',
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
-                ]
-                
-                cookie_file = None
-                for f in cookie_files:
-                    if os.path.exists(f):
-                        cookie_file = f
-                        logger.info(f"Found cookie file for browser: {f}")
-                        break
-                
-                # Initialize browser
-                browser = uc.Chrome(options=chrome_options)
-                
-                try:
-                    # First load YouTube main site to set up cookies/localStorage
-                    browser.get("https://www.youtube.com")
-                    time.sleep(2)  # Allow site to load
-                    
-                    # If we have a cookie file, load the cookies
-                    if cookie_file:
-                        logger.info("Loading cookies into browser")
-                        try:
-                            # Parse the Netscape cookie file
-                            with open(cookie_file, 'r') as f:
-                                cookie_content = f.read()
-                                
-                            # Find and add each cookie
-                            cookie_matches = re.findall(r'\.youtube\.com\s+TRUE\s+\/\s+(TRUE|FALSE)\s+\d+\s+(\S+)\s+([^\s]+)', cookie_content)
-                            
-                            for http_only, name, value in cookie_matches:
-                                if name and value and name not in ['', '#']:
-                                    try:
-                                        browser.add_cookie({
-                                            'name': name,
-                                            'value': value,
-                                            'domain': '.youtube.com',
-                                            'path': '/'
-                                        })
-                                    except Exception as e:
-                                        logger.warning(f"Error adding cookie {name}: {str(e)}")
-                        except Exception as e:
-                            logger.warning(f"Error loading cookies: {str(e)}")
-                    
-                    # Navigate to the video page
-                    logger.info(f"Navigating to {url}")
-                    browser.get(url)
-                    time.sleep(5)  # Give time for page to load fully
-                    
-                    # Check for bot detection message
-                    if "confirm you're not a robot" in browser.page_source.lower():
-                        logger.warning("Bot detection triggered even with undetected-chromedriver")
-                        
-                        # Try to find and click the "I'm not a robot" button or checkbox
-                        try:
-                            # Look for various potential selectors (adjust based on YouTube's current implementation)
-                            selectors = [
-                                "//button[contains(text(), 'I'm not a robot')]",
-                                "//button[contains(text(), 'Verify')]",
-                                "//div[@role='checkbox']",
-                                "//iframe[contains(@src, 'recaptcha')]"
-                            ]
-                            
-                            for selector in selectors:
-                                try:
-                                    elements = browser.find_elements(By.XPATH, selector)
-                                    if elements:
-                                        logger.info(f"Found verification element with selector: {selector}")
-                                        elements[0].click()
-                                        time.sleep(3)
-                                        break
-                                except Exception as click_error:
-                                    logger.warning(f"Error clicking selector {selector}: {str(click_error)}")
-                                    
-                            # Wait for recaptcha to process
-                            time.sleep(10)
-                        except Exception as verify_error:
-                            logger.warning(f"Error during verification: {str(verify_error)}")
-                    
-                    # Now extract the master M3U8 URL from the page source
-                    # YouTube typically includes these in the player response JSON
-                    page_source = browser.page_source
-                    
-                    # Look for hlsManifestUrl which contains the highest quality stream
-                    hls_match = re.search(r'"hlsManifestUrl":"([^"]+)"', page_source)
-                    if hls_match:
-                        logger.info("Found HLS manifest URL")
-                        master_m3u8_url = hls_match.group(1).replace('\\u0026', '&')
-                        
-                        # Download using ffmpeg (best for HLS streams)
-                        ffmpeg_cmd = f'ffmpeg -i "{master_m3u8_url}" -c copy -bsf:a aac_adtstoasc "{destination}" -y'
-                        logger.info(f"Executing ffmpeg HLS download: {ffmpeg_cmd}")
-                        subprocess.run(ffmpeg_cmd, shell=True, check=True)
-                        
-                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                            logger.info(f"Successfully downloaded using HLS stream to {destination}")
-                            browser.quit()
-                            return destination
-                    
-                    # If HLS not found, try other JSON data from JavaScript variables
-                    try:
-                        # Extract the ytInitialPlayerResponse variable
-                        if "ytInitialPlayerResponse" in page_source:
-                            player_response_match = re.search(r'ytInitialPlayerResponse\s*=\s*({.+?});', page_source, re.DOTALL)
-                            if player_response_match:
-                                import json
-                                
-                                try:
-                                    # Parse out the player response JSON
-                                    player_response_text = player_response_match.group(1)
-                                    # Handle JavaScript functions by replacing them with empty objects
-                                    player_response_text = re.sub(r'function\(\){.+?}', '{}', player_response_text)
-                                    # Replace other JavaScript constructs that aren't valid JSON
-                                    player_response_text = re.sub(r'([\w]+):', r'"\1":', player_response_text)
-                                    
-                                    logger.info("Found ytInitialPlayerResponse - checking for adaptive formats")
-                                    
-                                    # Try to find streaming data and adaptive formats
-                                    if '"adaptiveFormats"' in player_response_text:
-                                        # Extract just the adaptive formats array
-                                        adaptive_formats_match = re.search(r'"adaptiveFormats"\s*:\s*(\[.+?\])', player_response_text)
-                                        if adaptive_formats_match:
-                                            try:
-                                                json_text = adaptive_formats_match.group(1)
-                                                # Fix any remaining JSON issues
-                                                json_text = json_text.replace('\'', '"')
-                                                formats_list = json.loads(json_text)
-                                                
-                                                logger.info(f"Found {len(formats_list)} adaptive formats")
-                                                
-                                                # Find highest quality video and audio formats
-                                                video_formats = [f for f in formats_list if 'video' in f.get('mimeType', '')]
-                                                audio_formats = [f for f in formats_list if 'audio' in f.get('mimeType', '')]
-                                                
-                                                video_formats.sort(key=lambda x: int(x.get('width', 0)), reverse=True)
-                                                audio_formats.sort(key=lambda x: int(x.get('bitrate', 0)), reverse=True)
-                                                
-                                                if video_formats and audio_formats:
-                                                    video_url = video_formats[0].get('url', '')
-                                                    audio_url = audio_formats[0].get('url', '')
-                                                    
-                                                    if video_url and audio_url:
-                                                        logger.info("Found separate video and audio URLs, downloading with ffmpeg")
-                                                        video_temp = f"{destination}.video.mp4"
-                                                        audio_temp = f"{destination}.audio.m4a"
-                                                        
-                                                        # Download video and audio separately
-                                                        subprocess.run(f'curl -s "{video_url}" -o "{video_temp}"', shell=True, check=True)
-                                                        subprocess.run(f'curl -s "{audio_url}" -o "{audio_temp}"', shell=True, check=True)
-                                                        
-                                                        # Merge them
-                                                        subprocess.run(f'ffmpeg -i "{video_temp}" -i "{audio_temp}" -c copy "{destination}" -y', 
-                                                                      shell=True, check=True)
-                                                        
-                                                        # Clean up temp files
-                                                        for temp_file in [video_temp, audio_temp]:
-                                                            if os.path.exists(temp_file):
-                                                                os.remove(temp_file)
-                                                        
-                                                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                                                            logger.info(f"Successfully downloaded using adaptive formats to {destination}")
-                                                            browser.quit()
-                                                            return destination
-                                            except json.JSONDecodeError as json_error:
-                                                logger.warning(f"Error parsing adaptiveFormats JSON: {str(json_error)}")
-                                except Exception as json_error:
-                                    logger.warning(f"Error processing player response: {str(json_error)}")
-                    except Exception as page_error:
-                        logger.warning(f"Error extracting JSON data: {str(page_error)}")
-                    
-                    # If direct extraction methods fail, take a screenshot to help debug
-                    try:
-                        screenshot_path = f"{destination}.screenshot.png"
-                        browser.save_screenshot(screenshot_path)
-                        logger.info(f"Saved page screenshot to {screenshot_path}")
-                    except Exception as ss_error:
-                        logger.warning(f"Error saving screenshot: {str(ss_error)}")
-                    
-                    # As a last resort, try yt-dlp with the cookies from the browser
-                    try:
-                        logger.info("Attempting yt-dlp with browser cookies")
-                        browser_cookie_file = f"{destination}.browser_cookies.txt"
-                        
-                        # Extract cookies from browser and save to file
-                        with open(browser_cookie_file, 'w') as f:
-                            f.write("# Netscape HTTP Cookie File\n")
-                            for cookie in browser.get_cookies():
-                                if 'youtube' in cookie['domain']:
-                                    secure = "TRUE" if cookie.get('secure', False) else "FALSE"
-                                    http_only = "TRUE" if cookie.get('httpOnly', False) else "FALSE"
-                                    expires = str(int(cookie.get('expiry', int(time.time() + 3600))))
-                                    
-                                    cookie_line = f"{cookie['domain']}\t{http_only}\t{cookie['path']}\t{secure}\t{expires}\t{cookie['name']}\t{cookie['value']}\n"
-                                    f.write(cookie_line)
-                        
-                        if os.path.exists(browser_cookie_file):
-                            # Use yt-dlp with the browser cookies
-                            ytdlp_cmd = f"yt-dlp -v --cookies={browser_cookie_file} -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{destination}'"
-                            logger.info(f"Executing yt-dlp with browser cookies: {ytdlp_cmd}")
-                            subprocess.run(ytdlp_cmd, shell=True, check=True)
-                            
-                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                                logger.info(f"Successfully downloaded using yt-dlp with browser cookies")
-                                browser.quit()
-                                return destination
-                    except Exception as ytdlp_error:
-                        logger.warning(f"Error with yt-dlp browser cookies: {str(ytdlp_error)}")
-                    
-                finally:
-                    browser.quit()
-                    
-            except Exception as uc_error:
-                logger.warning(f"Error with undetected-chromedriver: {str(uc_error)}")
-        
-        # Fall back to regular Selenium if undetected-chromedriver fails or is not available
-        if SELENIUM_AVAILABLE:
-            try:
-                logger.info("Falling back to regular Selenium for download")
-                
-                # Setup Chrome options
-                chrome_options = Options()
-                chrome_options.add_argument("--headless")
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--disable-dev-shm-usage")
-                chrome_options.add_argument("--disable-gpu")
-                
-                # Additional options to avoid detection
-                chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-                chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                
-                service = Service(ChromeDriverManager().install())
-                browser = webdriver.Chrome(service=service, options=chrome_options)
-                
-                # Execute same strategy as the undetected-chromedriver approach
-                try:
-                    browser.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                    
-                    # YouTube main page to set up cookies
-                    browser.get("https://www.youtube.com")
-                    time.sleep(2)
-                    
-                    # Navigate to the video
-                    browser.get(url)
-                    time.sleep(5)
-                    
-                    # Use same extraction strategy as above
-                    # ...extraction code would be identical to the above...
-                    
-                finally:
-                    browser.quit()
-            
-            except Exception as selenium_error:
-                logger.warning(f"Error with regular Selenium: {str(selenium_error)}")
-    
-    except Exception as e:
-        logger.error(f"Browser download failed: {str(e)}")
-    
-    return None
-
-def download_from_youtube(url, destination):
-    """Download a video from YouTube using yt-dlp at maximum resolution."""
-    logger.info(f"Starting YouTube download: {url}")
-    
-    # Try browser-based download first (most reliable for bypassing bot detection)
-    try:
-        logger.info("Attempting browser-based YouTube download")
-        result = browser_download_youtube(url, destination)
-        if result:
-            logger.info("Browser-based download successful")
-            return result
-        else:
-            logger.warning("Browser-based download failed, falling back to yt-dlp methods")
-    except Exception as e:
-        logger.warning(f"Browser download failed: {str(e)}")
-    
-    # Try to extract video ID
-    video_id = None
-    try:
-        if "youtube.com/watch?v=" in url:
-            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        
-        if video_id:
-            logger.info(f"Extracted YouTube video ID: {video_id}")
-    except Exception as e:
-        logger.warning(f"Could not extract YouTube video ID: {str(e)}")
-    
-    try:
-        # Check if aria2c is available
-        aria2c_available = False
-        try:
-            import subprocess
-            result = subprocess.run(['which', 'aria2c'], capture_output=True, text=True)
-            aria2c_available = result.returncode == 0
-            logger.info(f"aria2c available: {aria2c_available}")
-        except Exception:
-            logger.info("Could not check for aria2c, assuming not available")
-        
-        # Check multiple cookie file locations with detailed logging
+        # Find cookie files
         cookie_files = [
+            '/app/cookies.txt',
+            '/app/youtube_cookies.txt',
+            '/app/auth/cookies.txt',
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt'),
-            '/app/cookies.txt',
-            '/app/youtube_cookies.txt',
-            '/app/auth/cookies.txt'
         ]
-        
-        # Debug: List all files in current directory and app directory
-        try:
-            logger.info(f"Current working directory: {os.getcwd()}")
-            logger.info(f"Files in current directory: {os.listdir('.')}")
-            if os.path.exists('/app'):
-                logger.info(f"Files in /app directory: {os.listdir('/app')}")
-                if os.path.exists('/app/auth'):
-                    logger.info(f"Files in /app/auth directory: {os.listdir('/app/auth')}")
-        except Exception as e:
-            logger.warning(f"Error listing files: {str(e)}")
         
         cookie_file = None
         for f in cookie_files:
             if os.path.exists(f):
                 cookie_file = f
-                logger.info(f"Found cookie file: {f}")
-                
-                # Debug: Check cookie file content
-                try:
-                    with open(f, 'r') as cf:
-                        cookie_content = cf.read(500)  # Read first 500 chars just to verify
-                        logger.info(f"Cookie file content preview: {cookie_content[:100]}...")
-                except Exception as e:
-                    logger.warning(f"Error reading cookie file: {str(e)}")
-                
+                logger.info(f"BROWSER METHOD: Found cookie file: {f}")
                 break
         
         if not cookie_file:
-            logger.warning("No cookie file found! Searched in: " + ", ".join(cookie_files))
-            
-            # Create a new cookie file with the user's cookies
-            try:
-                logger.info("Attempting to create cookie file directly")
-                fallback_cookie_path = '/tmp/youtube_cookies.txt'
-                with open(fallback_cookie_path, 'w') as f:
-                    f.write("""# Netscape HTTP Cookie File
+            logger.warning("BROWSER METHOD: No cookie file found. Creating a temporary one.")
+            temp_cookie_file = f"/tmp/temp_cookies_{int(time.time())}.txt"
+            with open(temp_cookie_file, 'w') as f:
+                f.write("""# Netscape HTTP Cookie File
 # http://curl.haxx.se/rfc/cookie_spec.html
 # This is a generated file!  Do not edit.
 
@@ -671,292 +366,717 @@ def download_from_youtube(url, destination):
 .youtube.com	TRUE	/	TRUE	1775191667	__Secure-3PAPISID	jNsGEI0LJPGkg-wB/AZC4pLD2m1mCiybZd
 .youtube.com	TRUE	/	TRUE	1756381241	VISITOR_INFO1_LIVE	k5a3-3JDD78
 .youtube.com	TRUE	/	TRUE	0	YSC	V2Yp_2J6c1M""")
-                cookie_file = fallback_cookie_path
-                logger.info(f"Created fallback cookie file at {fallback_cookie_path}")
-            except Exception as e:
-                logger.warning(f"Failed to create fallback cookie file: {str(e)}")
-
-        # Configure yt-dlp for best quality with additional options to bypass restrictions
-        ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Get best quality
-            'outtmpl': destination,  # Output filename
-            'noplaylist': True,      # Only download the video, not the playlist
-            'quiet': False,          # Show progress
-            'no_warnings': False,    # Show warnings
-            'verbose': True,         # Verbose output for debugging
-            'retries': 10,           # Number of retries
-            'fragment_retries': 10,  # Number of fragment retries
-            'continuedl': True,      # Continue partial downloads
-            'merge_output_format': 'mp4',  # Ensure output is mp4
-            'nocheckcertificate': True,    # Skip HTTPS certificate validation
-            'geo_bypass': True,            # Bypass geo-restriction
-            'extractor_retries': 5,        # Retry extractor on error
-            'socket_timeout': 30,          # Socket timeout in seconds
-            'concurrent_fragment_downloads': 5,  # Download fragments in parallel
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/',
-            'debug_printtraffic': True,     # Print all sent and received HTTP traffic
-            'http_headers': {               # Custom HTTP headers
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate'
-            }
-        }
+            cookie_file = temp_cookie_file
+            logger.info(f"BROWSER METHOD: Created temporary cookie file: {temp_cookie_file}")
         
-        # Add cookie file if available
-        if cookie_file:
-            ydl_opts['cookiefile'] = cookie_file
-            ydl_opts['cookiesfrombrowser'] = None  # Don't try to get cookies from browser
-        
-        # Add aria2c if available
-        if aria2c_available:
-            ydl_opts.update({
-                'external_downloader': 'aria2c',  # Use aria2c for better downloading
-                'external_downloader_args': ['--min-split-size=1M', '--max-connection-per-server=16']
-            })
-        
-        # Track success across all methods
-        success = False
-        
-        # Try a direct approach with the most recent yt-dlp version
+        # Try a more direct approach first - use yt-dlp but with a special user agent and referer
         try:
-            logger.info("DIRECT METHOD: Using direct yt-dlp with cookies")
+            logger.info("BROWSER METHOD: First trying direct yt-dlp approach with browser emulation")
+            browser_ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            ytdlp_cmd = f"""yt-dlp -v --cookies={cookie_file} --user-agent="{browser_ua}" --referer="https://www.youtube.com/" --no-check-certificate -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{destination}'"""
+            logger.info(f"BROWSER METHOD: Running command: {ytdlp_cmd}")
             
-            import sys
-            # Print yt-dlp version for debugging
+            proc = subprocess.run(ytdlp_cmd, shell=True, capture_output=True, text=True)
+            if proc.returncode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"BROWSER METHOD: Direct yt-dlp approach successful! File size: {os.path.getsize(destination)}")
+                return destination
+            else:
+                logger.warning(f"BROWSER METHOD: Direct approach failed. Return code: {proc.returncode}")
+                logger.warning(f"BROWSER METHOD: Error output: {proc.stderr}")
+        except Exception as e:
+            logger.warning(f"BROWSER METHOD: Direct approach exception: {str(e)}")
+        
+        # Try undetected-chromedriver
+        if UC_AVAILABLE and use_undetected:
             try:
-                import yt_dlp
-                logger.info(f"yt-dlp version: {yt_dlp.version.__version__}")
-            except Exception as e:
-                logger.warning(f"Could not get yt-dlp version: {str(e)}")
-            
-            direct_destination = destination
-            direct_cmd = f"yt-dlp -v --cookies={cookie_file} -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{direct_destination}'"
-            logger.info(f"Executing direct command: {direct_cmd}")
-            os.system(direct_cmd)
-            
-            if os.path.exists(direct_destination) and os.path.getsize(direct_destination) > 0:
-                file_size = os.path.getsize(direct_destination) / (1024 * 1024)
-                logger.info(f"DIRECT METHOD SUCCESS: {file_size:.2f} MB")
-                return direct_destination
-            else:
-                logger.warning("DIRECT METHOD FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"DIRECT METHOD FAILED: {str(e)}")
-        
-        # Method 1: Standard yt-dlp download
-        try:
-            logger.info("METHOD 1: Standard yt-dlp download")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                logger.info("BROWSER METHOD: Using undetected-chromedriver")
                 
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"METHOD 1 SUCCESS: {file_size:.2f} MB")
-                return destination
-            else:
-                logger.warning("METHOD 1 FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"METHOD 1 FAILED: {str(e)}")
-        
-        # Method 2: Try with simplified format and different user agent
-        try:
-            logger.info("METHOD 2: Simplified format selection")
-            mod_opts = ydl_opts.copy()
-            mod_opts.update({
-                'format': 'best',  # Simplified format
-                'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                'referer': 'https://www.google.com/'
-            })
-            
-            with yt_dlp.YoutubeDL(mod_opts) as ydl:
-                ydl.download([url])
+                # Setup Chrome options
+                chrome_options = uc.ChromeOptions()
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument("--disable-gpu")
                 
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"METHOD 2 SUCCESS: {file_size:.2f} MB")
-                return destination
-            else:
-                logger.warning("METHOD 2 FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"METHOD 2 FAILED: {str(e)}")
-        
-        # Method 3: Use youtube-dl format directly
-        try:
-            logger.info("METHOD 3: youtube-dl format")
-            ytdl_destination = destination + ".ytdl"
-            
-            # Create a simplified options dict for yt-dlp
-            simple_opts = {
-                'format': 'best',
-                'outtmpl': ytdl_destination,
-                'noplaylist': True,
-                'cookiefile': cookie_file,
-                'quiet': False,
-                'no_warnings': False
-            }
-            
-            with yt_dlp.YoutubeDL(simple_opts) as ydl:
-                ydl.download([url])
+                # Set Chrome binary path if specified in environment
+                chrome_bin = os.environ.get('CHROME_BIN')
+                if chrome_bin:
+                    logger.info(f"BROWSER METHOD: Using Chrome binary from env: {chrome_bin}")
+                    chrome_options.binary_location = chrome_bin
                 
-            if os.path.exists(ytdl_destination) and os.path.getsize(ytdl_destination) > 0:
-                # Rename the file to the expected destination
-                os.rename(ytdl_destination, destination)
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"METHOD 3 SUCCESS: {file_size:.2f} MB")
-                return destination
-            else:
-                logger.warning("METHOD 3 FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"METHOD 3 FAILED: {str(e)}")
-            
-        # Method 4: Use ffmpeg directly with youtube-dl
-        try:
-            logger.info("METHOD 4: ffmpeg with youtube-dl")
-            ffmpeg_destination = destination + ".ffmpeg"
-            
-            # Use system command for youtube-dl with ffmpeg
-            cmd = f"youtube-dl --cookies {cookie_file} -f best -o {ffmpeg_destination} {url}"
-            logger.info(f"Executing command: {cmd}")
-            os.system(cmd)
-            
-            if os.path.exists(ffmpeg_destination) and os.path.getsize(ffmpeg_destination) > 0:
-                # Rename the file to the expected destination
-                os.rename(ffmpeg_destination, destination)
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"METHOD 4 SUCCESS: {file_size:.2f} MB")
-                return destination
-            else:
-                logger.warning("METHOD 4 FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"METHOD 4 FAILED: {str(e)}")
-        
-        # Method 5: Use curl with a direct video link if we can find one
-        try:
-            logger.info("METHOD 5: curl with direct youtube link")
-            if not video_id:
-                logger.warning("METHOD 5 FAILED: No video ID available")
-            else:
-                # Try to get a direct video URL using a minimal query to YouTube
-                curl_cmd = f"curl -s -L -A 'Mozilla/5.0' --cookie-jar /tmp/yt_cookies.txt 'https://www.youtube.com/watch?v={video_id}' | grep -o 'https://[^\"]*videoplayback[^\"]*'"
-                logger.info(f"Running extraction command: {curl_cmd}")
+                # Initialize browser with more detailed error handling
+                logger.info("BROWSER METHOD: Initializing undetected Chrome browser")
+                try:
+                    browser = uc.Chrome(options=chrome_options)
+                    logger.info("BROWSER METHOD: Browser initialized successfully")
+                except Exception as browser_init_error:
+                    logger.error(f"BROWSER METHOD: Failed to initialize Chrome: {str(browser_init_error)}")
+                    # Try with selenium's regular Chrome as a fallback
+                    raise Exception("Chrome initialization failed")
                 
-                import subprocess
-                result = subprocess.run(curl_cmd, shell=True, capture_output=True, text=True)
-                
-                if result.stdout.strip():
-                    direct_urls = result.stdout.strip().split('\n')
-                    logger.info(f"Found {len(direct_urls)} potential direct URLs")
+                try:
+                    # First load YouTube main site
+                    logger.info("BROWSER METHOD: Loading YouTube main site")
+                    browser.get("https://www.youtube.com")
+                    time.sleep(3)  # Give more time to load
                     
-                    for i, direct_url in enumerate(direct_urls):
-                        # Clean up the URL
-                        direct_url = direct_url.replace('\\u0026', '&')
-                        curl_dest = f"{destination}.curl{i}"
-                        
-                        curl_download_cmd = f"curl -L -A 'Mozilla/5.0' --cookie /tmp/yt_cookies.txt '{direct_url}' -o {curl_dest}"
-                        logger.info(f"Trying direct download: {curl_download_cmd}")
-                        os.system(curl_download_cmd)
-                        
-                        if os.path.exists(curl_dest) and os.path.getsize(curl_dest) > 1024 * 1024:  # At least 1MB
-                            os.rename(curl_dest, destination)
-                            file_size = os.path.getsize(destination) / (1024 * 1024)
-                            logger.info(f"METHOD 5 SUCCESS: {file_size:.2f} MB")
-                            return destination
-                        else:
-                            logger.warning(f"Direct URL {i} download failed or too small")
-                else:
-                    logger.warning("No direct URLs found in YouTube page")
-        except Exception as e:
-            logger.warning(f"METHOD 5 FAILED: {str(e)}")
-        
-        # Method 6: Last resort - try a completely different approach with pytube
-        try:
-            logger.info("METHOD 6: pytube")
-            # Get cookies into a format pytube can use
-            if cookie_file:
-                # Export cookies to environment variable
-                os.environ["COOKIE_FILE"] = cookie_file
-            
-            from pytube import YouTube
-            
-            # Monkey patch the pytube to use our cookies if needed
-            try:
-                import pytube.request
-                original_get = pytube.request.get
-                
-                def patched_get(*args, **kwargs):
-                    # Add cookie header if available
-                    if "cookies" not in kwargs and cookie_file:
+                    # Take screenshot of YouTube homepage
+                    screenshot_path = os.path.join(logs_dir, f"youtube_homepage_{time.strftime('%Y%m%d_%H%M%S')}.png")
+                    browser.save_screenshot(screenshot_path)
+                    logger.info(f"BROWSER METHOD: Saved homepage screenshot to {screenshot_path}")
+                    
+                    # Load cookies
+                    if cookie_file:
+                        logger.info(f"BROWSER METHOD: Loading cookies from {cookie_file}")
                         try:
                             with open(cookie_file, 'r') as f:
-                                cookies_content = f.read()
-                                
-                            # Extract SID and HSID cookies
-                            sid_match = re.search(r'SID\s+(\S+)', cookies_content)
-                            hsid_match = re.search(r'HSID\s+(\S+)', cookies_content)
+                                cookie_content = f.read()
                             
-                            cookie_header = ""
-                            if sid_match:
-                                cookie_header += f"SID={sid_match.group(1)}; "
-                            if hsid_match:
-                                cookie_header += f"HSID={hsid_match.group(1)}; "
-                                
-                            if cookie_header and "headers" in kwargs:
-                                kwargs["headers"]["Cookie"] = cookie_header
+                            # Use regex to find all cookies
+                            cookie_matches = re.findall(r'\.youtube\.com\s+TRUE\s+\/\s+(TRUE|FALSE)\s+\d+\s+(\S+)\s+([^\s]+)', cookie_content)
+                            logger.info(f"BROWSER METHOD: Found {len(cookie_matches)} cookies")
+                            
+                            for http_only, name, value in cookie_matches:
+                                if name and value and not name.startswith('#'):
+                                    try:
+                                        browser.add_cookie({
+                                            'name': name,
+                                            'value': value,
+                                            'domain': '.youtube.com',
+                                            'path': '/'
+                                        })
+                                    except Exception as cookie_error:
+                                        logger.warning(f"BROWSER METHOD: Error adding cookie {name}: {str(cookie_error)}")
                         except Exception as e:
-                            logger.warning(f"Error setting cookies for pytube: {str(e)}")
+                            logger.warning(f"BROWSER METHOD: Error loading cookies: {str(e)}")
                     
-                    return original_get(*args, **kwargs)
+                    # Navigate to the video page
+                    logger.info(f"BROWSER METHOD: Navigating to {url}")
+                    browser.get(url)
+                    time.sleep(5)  # More time to load
+                    
+                    # Take screenshot of video page
+                    screenshot_path = os.path.join(logs_dir, f"youtube_video_{time.strftime('%Y%m%d_%H%M%S')}.png")
+                    browser.save_screenshot(screenshot_path)
+                    logger.info(f"BROWSER METHOD: Saved video page screenshot to {screenshot_path}")
+                    
+                    # Save page source for debugging
+                    page_source_path = os.path.join(logs_dir, f"youtube_page_source_{time.strftime('%Y%m%d_%H%M%S')}.html")
+                    with open(page_source_path, 'w') as f:
+                        f.write(browser.page_source)
+                    logger.info(f"BROWSER METHOD: Saved page source to {page_source_path}")
+                    
+                    # Check for bot detection
+                    if "confirm you're not a robot" in browser.page_source.lower() or "please verify" in browser.page_source.lower():
+                        logger.warning("BROWSER METHOD: Bot detection triggered")
+                        
+                        # Try to solve the captcha
+                        try:
+                            # Look for recaptcha iframe
+                            if "recaptcha" in browser.page_source.lower():
+                                logger.info("BROWSER METHOD: Found reCAPTCHA, attempting to solve")
+                                
+                                iframes = browser.find_elements(By.TAG_NAME, 'iframe')
+                                recaptcha_iframe = None
+                                
+                                for iframe in iframes:
+                                    if 'recaptcha' in iframe.get_attribute('src').lower():
+                                        recaptcha_iframe = iframe
+                                        break
+                                
+                                if recaptcha_iframe:
+                                    logger.info("BROWSER METHOD: Switching to reCAPTCHA iframe")
+                                    browser.switch_to.frame(recaptcha_iframe)
+                                    
+                                    # Try to find the checkbox
+                                    checkbox = browser.find_element(By.CLASS_NAME, 'recaptcha-checkbox-border')
+                                    if checkbox:
+                                        logger.info("BROWSER METHOD: Clicking reCAPTCHA checkbox")
+                                        checkbox.click()
+                                        time.sleep(2)
+                                        
+                                        # Take screenshot after clicking
+                                        browser.switch_to.default_content()
+                                        screenshot_path = os.path.join(logs_dir, "after_captcha_click.png")
+                                        browser.save_screenshot(screenshot_path)
+                                        logger.info(f"BROWSER METHOD: Saved post-captcha screenshot to {screenshot_path}")
+                        except Exception as captcha_error:
+                            logger.warning(f"BROWSER METHOD: Error handling captcha: {str(captcha_error)}")
+                    
+                    # Extract video URL from JavaScript
+                    logger.info("BROWSER METHOD: Extracting video URL from JavaScript")
+                    try:
+                        # Look for ytInitialPlayerResponse
+                        player_response = None
+                        try:
+                            # Execute JavaScript to get player response
+                            player_response = browser.execute_script(
+                                "return window.ytInitialPlayerResponse || "
+                                "(function() { "
+                                "for (const key in window) { "
+                                "if (key.indexOf('ytInitialPlayerResponse') >= 0) return window[key]; "
+                                "} "
+                                "return null; })();"
+                            )
+                            
+                            if player_response:
+                                logger.info("BROWSER METHOD: Successfully extracted player response via JavaScript")
+                                
+                                # Save response for debugging
+                                import json
+                                response_path = os.path.join(logs_dir, "player_response.json")
+                                with open(response_path, 'w') as f:
+                                    json.dump(player_response, f, indent=2)
+                                logger.info(f"BROWSER METHOD: Saved player response to {response_path}")
+                                
+                                # Get streaming URLs
+                                formats = []
+                                if 'streamingData' in player_response:
+                                    streaming_data = player_response['streamingData']
+                                    
+                                    # Check for HLS manifest
+                                    if 'hlsManifestUrl' in streaming_data:
+                                        manifest_url = streaming_data['hlsManifestUrl']
+                                        logger.info(f"BROWSER METHOD: Found HLS manifest: {manifest_url}")
+                                        
+                                        # Download using ffmpeg
+                                        ffmpeg_cmd = f'ffmpeg -i "{manifest_url}" -c copy -bsf:a aac_adtstoasc "{destination}" -y'
+                                        logger.info(f"BROWSER METHOD: Executing ffmpeg HLS download: {ffmpeg_cmd}")
+                                        subprocess.run(ffmpeg_cmd, shell=True, check=True)
+                                        
+                                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                            logger.info(f"BROWSER METHOD: HLS download successful - size: {os.path.getsize(destination)}")
+                                            browser.quit()
+                                            return destination
+                                    
+                                    # Check for formats directly
+                                    if 'formats' in streaming_data:
+                                        formats.extend(streaming_data['formats'])
+                                    
+                                    if 'adaptiveFormats' in streaming_data:
+                                        formats.extend(streaming_data['adaptiveFormats'])
+                                    
+                                    if formats:
+                                        logger.info(f"BROWSER METHOD: Found {len(formats)} formats")
+                                        
+                                        # Find highest quality video and audio
+                                        video_formats = [f for f in formats if f.get('mimeType', '').startswith('video')]
+                                        audio_formats = [f for f in formats if f.get('mimeType', '').startswith('audio')]
+                                        
+                                        video_formats.sort(key=lambda x: int(x.get('width', 0) * x.get('height', 0)), reverse=True)
+                                        audio_formats.sort(key=lambda x: int(x.get('bitrate', 0)), reverse=True)
+                                        
+                                        if video_formats and audio_formats:
+                                            video_url = video_formats[0].get('url')
+                                            audio_url = audio_formats[0].get('url')
+                                            
+                                            if video_url and audio_url:
+                                                logger.info("BROWSER METHOD: Downloading highest quality video and audio")
+                                                video_temp = f"{destination}.video.mp4"
+                                                audio_temp = f"{destination}.audio.m4a"
+                                                
+                                                # Download both
+                                                subprocess.run(f'curl -s "{video_url}" -o "{video_temp}"', shell=True, check=True)
+                                                subprocess.run(f'curl -s "{audio_url}" -o "{audio_temp}"', shell=True, check=True)
+                                                
+                                                # Combine with ffmpeg
+                                                subprocess.run(f'ffmpeg -i "{video_temp}" -i "{audio_temp}" -c copy "{destination}" -y', 
+                                                              shell=True, check=True)
+                                                
+                                                # Clean up
+                                                for temp_file in [video_temp, audio_temp]:
+                                                    if os.path.exists(temp_file):
+                                                        os.remove(temp_file)
+                                                
+                                                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                                    logger.info(f"BROWSER METHOD: Combined download successful - size: {os.path.getsize(destination)}")
+                                                    browser.quit()
+                                                    return destination
+                        except Exception as js_error:
+                            logger.warning(f"BROWSER METHOD: Error extracting player response: {str(js_error)}")
+                    
+                        # Fallback: parse from page source
+                        if not player_response:
+                            logger.info("BROWSER METHOD: Trying to parse player response from page source")
+                            page_source = browser.page_source
+                            
+                            # Look for ytInitialPlayerResponse
+                            match = re.search(r'ytInitialPlayerResponse\s*=\s*({.+?});', page_source, re.DOTALL)
+                            if match:
+                                try:
+                                    import json
+                                    player_data = match.group(1)
+                                    
+                                    # Try to clean up the JS before parsing as JSON
+                                    player_data = re.sub(r'function\s*\([^)]*\)\s*{[^}]*}', '{}', player_data)
+                                    player_data = re.sub(r'new [a-zA-Z]+\([^)]*\)', '{}', player_data)
+                                    # Convert JS property names to JSON format
+                                    player_data = re.sub(r'([{,])\s*(\w+):', r'\1"\2":', player_data)
+                                    
+                                    # Try to parse JSON
+                                    try:
+                                        player_response = json.loads(player_data)
+                                        logger.info("BROWSER METHOD: Successfully parsed player response from page source")
+                                    except json.JSONDecodeError:
+                                        logger.warning("BROWSER METHOD: Could not parse full JSON, trying partial extraction")
+                                        
+                                        # Try to extract just the streaming data
+                                        streaming_data_match = re.search(r'"streamingData"\s*:\s*({.+?}),\s*"playbackTracking"', player_data)
+                                        if streaming_data_match:
+                                            streaming_data = streaming_data_match.group(1)
+                                            
+                                            # Extract adaptive formats array
+                                            formats_match = re.search(r'"adaptiveFormats"\s*:\s*(\[.+?\])', streaming_data)
+                                            if formats_match:
+                                                formats_json = formats_match.group(1)
+                                                formats_json = re.sub(r'([{,])\s*(\w+):', r'\1"\2":', formats_json)
+                                                
+                                                try:
+                                                    formats = json.loads(formats_json)
+                                                    logger.info(f"BROWSER METHOD: Extracted {len(formats)} formats directly")
+                                                    
+                                                    # Find URLs
+                                                    for fmt in formats:
+                                                        if "url" in fmt:
+                                                            video_url = fmt.get("url")
+                                                            if "video" in fmt.get("mimeType", ""):
+                                                                logger.info("BROWSER METHOD: Found direct video URL")
+                                                                video_temp = f"{destination}.direct.mp4"
+                                                                
+                                                                # Try to download directly
+                                                                subprocess.run(f'curl -s "{video_url}" -o "{video_temp}"', shell=True, check=True)
+                                                                
+                                                                if os.path.exists(video_temp) and os.path.getsize(video_temp) > 0:
+                                                                    os.rename(video_temp, destination)
+                                                                    logger.info(f"BROWSER METHOD: Direct URL download successful - size: {os.path.getsize(destination)}")
+                                                                    browser.quit()
+                                                                    return destination
+                                                except Exception as fmt_error:
+                                                    logger.warning(f"BROWSER METHOD: Error parsing formats: {str(fmt_error)}")
+                                except Exception as parse_error:
+                                    logger.warning(f"BROWSER METHOD: Error parsing player response: {str(parse_error)}")
+                    except Exception as extract_error:
+                        logger.warning(f"BROWSER METHOD: Error extracting video URL: {str(extract_error)}")
+                    
+                    # Try using browser cookies with yt-dlp as last resort
+                    logger.info("BROWSER METHOD: Extracting browser cookies for yt-dlp")
+                    try:
+                        # Get cookies from browser
+                        browser_cookies = browser.get_cookies()
+                        browser_cookie_file = f"{destination}.browser_cookies.txt"
+                        
+                        with open(browser_cookie_file, 'w') as f:
+                            f.write("# Netscape HTTP Cookie File\n")
+                            for cookie in browser_cookies:
+                                domain = cookie['domain'] if cookie['domain'].startswith('.') else f".{cookie['domain']}"
+                                path = cookie.get('path', '/')
+                                secure = "TRUE" if cookie.get('secure', False) else "FALSE"
+                                http_only = "TRUE" if cookie.get('httpOnly', False) else "FALSE"
+                                expires = str(int(cookie.get('expiry', int(time.time() + 3600))))
+                                name = cookie['name']
+                                value = cookie['value']
+                                
+                                f.write(f"{domain}\t{http_only}\t{path}\t{secure}\t{expires}\t{name}\t{value}\n")
+                        
+                        # Use yt-dlp with browser cookies
+                        ytdlp_cmd = f"yt-dlp -v --cookies={browser_cookie_file} --referer='https://www.youtube.com/' --user-agent='{browser.execute_script('return navigator.userAgent')}' --no-check-certificate -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{destination}'"
+                        logger.info(f"BROWSER METHOD: Running yt-dlp with browser cookies: {ytdlp_cmd}")
+                        
+                        subprocess.run(ytdlp_cmd, shell=True, check=True)
+                        
+                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                            logger.info(f"BROWSER METHOD: yt-dlp with browser cookies successful - size: {os.path.getsize(destination)}")
+                            browser.quit()
+                            return destination
+                    except Exception as cookie_error:
+                        logger.warning(f"BROWSER METHOD: Error using browser cookies: {str(cookie_error)}")
+                    
+                except Exception as browser_error:
+                    logger.error(f"BROWSER METHOD: Browser automation error: {str(browser_error)}")
                 
-                pytube.request.get = patched_get
-            except Exception as e:
-                logger.warning(f"Could not patch pytube: {str(e)}")
-            
-            yt = YouTube(url)
-            stream = yt.streams.get_highest_resolution()
-            stream.download(filename=destination)
-            
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"METHOD 6 SUCCESS: {file_size:.2f} MB")
-                return destination
-            else:
-                logger.warning("METHOD 6 FAILED: Output file empty or missing")
-        except Exception as e:
-            logger.warning(f"METHOD 6 FAILED: {str(e)}")
+                # Ensure browser is closed
+                try:
+                    browser.quit()
+                except Exception:
+                    pass
+                    
+            except Exception as uc_error:
+                logger.error(f"BROWSER METHOD: undetected-chromedriver error: {str(uc_error)}")
         
-        # If all methods failed, try one last low-quality fallback
+        # Fall back to regular Selenium if needed
+        if SELENIUM_AVAILABLE and (not UC_AVAILABLE or not use_undetected):
+            try:
+                logger.info("BROWSER METHOD: Falling back to regular Selenium")
+                
+                # Setup Chrome options
+                chrome_options = Options()
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument("--disable-gpu")
+                chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+                chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                
+                # Set Chrome binary path if specified in environment
+                chrome_bin = os.environ.get('CHROME_BIN')
+                if chrome_bin:
+                    logger.info(f"BROWSER METHOD: Using Chrome binary from env for Selenium: {chrome_bin}")
+                    chrome_options.binary_location = chrome_bin
+                
+                # Initialize the service
+                service = Service(os.environ.get('CHROMEDRIVER_PATH', ChromeDriverManager().install()))
+                
+                # Initialize browser
+                browser = webdriver.Chrome(service=service, options=chrome_options)
+                
+                try:
+                    # Hide webdriver usage
+                    browser.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                    
+                    # Similar automation steps as with undetected-chromedriver
+                    # ... (would be identical to the procedure above)
+                    
+                finally:
+                    browser.quit()
+                
+            except Exception as selenium_error:
+                logger.error(f"BROWSER METHOD: Regular Selenium error: {str(selenium_error)}")
+        
+        # If all browser-based methods failed, try running youtube-dl directly with mpv's user agent
         try:
-            logger.info("FALLBACK METHOD: Low quality direct approach")
+            logger.info("BROWSER METHOD: Last resort - Using mpv's user agent with yt-dlp")
+            mpv_ua = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/118.0"
             
-            fallback_cmd = f"yt-dlp -f 'worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst' '{url}' -o '{destination}'"
-            logger.info(f"Executing fallback command: {fallback_cmd}")
-            os.system(fallback_cmd)
+            ytdlp_mpv_cmd = f"""yt-dlp -v --cookies={cookie_file} --user-agent="{mpv_ua}" --referer="https://www.youtube.com/" -f 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]' '{url}' -o '{destination}'"""
+            logger.info(f"BROWSER METHOD: Running mpv command: {ytdlp_mpv_cmd}")
             
-            if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                file_size = os.path.getsize(destination) / (1024 * 1024)
-                logger.info(f"FALLBACK METHOD SUCCESS: {file_size:.2f} MB (Low quality)")
+            proc = subprocess.run(ytdlp_mpv_cmd, shell=True, capture_output=True, text=True)
+            if proc.returncode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"BROWSER METHOD: mpv approach successful! File size: {os.path.getsize(destination)}")
                 return destination
             else:
-                logger.warning("FALLBACK METHOD FAILED: Output file empty or missing")
+                logger.warning(f"BROWSER METHOD: mpv approach failed. Return code: {proc.returncode}")
         except Exception as e:
-            logger.warning(f"FALLBACK METHOD FAILED: {str(e)}")
+            logger.warning(f"BROWSER METHOD: mpv approach exception: {str(e)}")
         
-        # If all methods failed, raise a helpful error
-        raise Exception(
-            "YouTube bot protection prevented download. This could be because:\n"
-            "1. YouTube's anti-bot systems are detecting our server as automated\n"
-            "2. The video may have restricted access or require login\n\n"
-            "Solutions:\n"
-            "1. Add a cookies.txt file from an authenticated YouTube session\n"
-            "2. Try again later when YouTube's bot detection might be less strict\n"
-            "3. Use Google Drive as an alternative for your videos instead of YouTube"
-        )
+        logger.error("BROWSER METHOD: All browser-based download methods failed")
+        return None
     
     except Exception as e:
-        logger.error(f"All YouTube download methods failed: {str(e)}")
-        raise Exception(f"Failed to download YouTube video: {str(e)}")
+        logger.error(f"BROWSER METHOD: Unhandled exception: {str(e)}")
+        import traceback
+        logger.error(f"BROWSER METHOD: Traceback: {traceback.format_exc()}")
+    
+    return None
+
+def download_from_youtube(url):
+    """
+    Download a video from YouTube.
+    
+    Args:
+        url (str): The URL of the YouTube video.
+        
+    Returns:
+        str: The path to the downloaded file.
+    """
+    logger.info(f"Starting download from YouTube URL: {url}")
+    
+    # Create videos directory if it doesn't exist
+    videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'videos')
+    os.makedirs(videos_dir, exist_ok=True)
+    
+    # Extract video ID from URL for better file naming
+    video_id = None
+    try:
+        if "youtube.com/watch?v=" in url:
+            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        
+        logger.info(f"Extracted video ID: {video_id}")
+    except Exception as e:
+        logger.warning(f"Error extracting video ID: {str(e)}")
+        video_id = None
+    
+    # Generate a unique filename
+    timestamp = int(time.time())
+    filename = f"{video_id}_{timestamp}.mp4" if video_id else f"youtube_{timestamp}.mp4"
+    destination = os.path.join(videos_dir, filename)
+    
+    logger.info(f"Will download to: {destination}")
+    
+    # Check environment for debugging
+    logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"Files in current directory: {os.listdir('.')}")
+    if os.path.exists('/app'):
+        logger.info(f"Files in /app: {os.listdir('/app')}")
+    
+    # First, try the browser-based method which has the best chance of bypassing bot detection
+    try:
+        logger.info("Attempting browser-based download first")
+        browser_result = browser_download_youtube(url, destination)
+        
+        if browser_result and os.path.exists(browser_result) and os.path.getsize(browser_result) > 0:
+            logger.info(f"Browser-based download successful: {os.path.getsize(browser_result)} bytes")
+            return browser_result
+        else:
+            logger.warning("Browser-based download failed, falling back to yt-dlp")
+    except Exception as browser_err:
+        logger.error(f"Browser download error: {str(browser_err)}")
+        logger.info("Falling back to yt-dlp methods")
+    
+    # If browser method fails, try all the fallback methods
+    try:
+        # Find cookie files
+        cookie_files = [
+            '/app/cookies.txt',
+            '/app/youtube_cookies.txt',
+            '/app/auth/cookies.txt',
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt'),
+        ]
+        
+        cookie_file = None
+        for f in cookie_files:
+            if os.path.exists(f):
+                cookie_file = f
+                logger.info(f"Found cookie file: {f}")
+                with open(f, 'r') as cf:
+                    cookie_sample = cf.read(100)  # Read first 100 chars to verify it's not empty
+                    logger.info(f"Cookie file sample: {cookie_sample}...")
+                break
+        
+        if not cookie_file:
+            logger.warning("No cookie file found. Creating a temporary one with basic auth.")
+            temp_cookie_file = "/tmp/fallback_cookies.txt"
+            with open(temp_cookie_file, 'w') as f:
+                f.write("""# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+# This file was generated by libcurl! Edit at your own risk.
+
+.youtube.com	TRUE	/	TRUE	0	YSC	w1xSMsKyJ_A
+.youtube.com	TRUE	/	TRUE	1719159580	VISITOR_INFO1_LIVE	DwGCxnmj2HA
+.youtube.com	TRUE	/	TRUE	1719159580	_Secure-YEC	Cgt0ZnM2cGtSdTRTRSjb6J2kBg%3D%3D
+.youtube.com	TRUE	/	TRUE	1719159580	__Secure-1PAPISID	k6TLxQXKnTMFXujB/AqigTXbNcGmGRyX3r
+.youtube.com	TRUE	/	TRUE	1719159580	__Secure-1PSID	ZQg3x1fTOxQUk2h2uPx0tcgtVLxO5EZpb-kTB71-4U3KdlQDKJqTW42XoPgWTQ5-wbw0RQ.
+.youtube.com	TRUE	/	TRUE	1719159580	__Secure-3PAPISID	k6TLxQXKnTMFXujB/AqigTXbNcGmGRyX3r
+.youtube.com	TRUE	/	TRUE	1719159580	__Secure-3PSID	ZQg3x1fTOxQUk2h2uPx0tcgtVLxO5EZpb-kTB71-4U3KdlQDQ5F-Cz1wWAe8sTm3O0slsA.
+.youtube.com	TRUE	/	TRUE	1719159580	APISID	x0QDAFEGrTKAXUHB/Ar0zhbnXwGmGKkNpM
+.youtube.com	TRUE	/	TRUE	1719159580	LOGIN_INFO	AFmmF2swRQIgUgPJTtj1PlFYXvplKQoFKYNF5G_7Tv4IHcjrxcA1VbICIQC9zLWCQdAR6tYb-KJnSA_lAHSKBhOvF3fdFXtmMZ7WxA:QUQ3MjNmd3hRV2xIcjVST2RLaEprVURtcGVsQk5KZ0NsQTljYlRzUl9LWk5fOV9MdmNuSmxYdHc3MWZYa2tQZjFpUk9OMDNwMDFmWlZxcXNMWUF2MDhoQm1RYVY1S0d1ek81cGZPamR2X3hhMF95X3ZwWlQtX3JXYW9ZTW9PUUdDLTZNUkhTSEhvc0xWNkdSOFVoem00dFVlMGNnZWJ1SmJ3""")
+            cookie_file = temp_cookie_file
+            logger.info(f"Created temporary cookie file: {temp_cookie_file}")
+        
+        # Try different download methods in sequence until one works
+        
+        # Method 1: Direct command execution with yt-dlp (with cookies)
+        try:
+            logger.info("Trying yt-dlp direct command execution with cookies")
+            command = f"yt-dlp -v --cookies={cookie_file} --no-check-certificate -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{url}' -o '{destination}'"
+            logger.info(f"Running command: {command}")
+            
+            result = subprocess.run(command, shell=True, capture_output=True, text=True)
+            logger.info(f"Command exit code: {result.returncode}")
+            
+            if result.returncode == 0 and os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"Direct command successful: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning(f"Direct command failed: {result.stderr}")
+        except Exception as cmd_err:
+            logger.warning(f"Direct command error: {str(cmd_err)}")
+        
+        # Method 2: yt-dlp API
+        try:
+            logger.info("Trying yt-dlp API with cookies")
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': destination,
+                'cookiefile': cookie_file,
+                'verbose': True,
+                'no_warnings': False,
+                'noplaylist': True,
+                'retries': 10,
+                'fragment_retries': 10,
+                'skip_unavailable_fragments': True,
+                'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                'referer': 'https://www.youtube.com/'
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info("Downloading with yt-dlp...")
+                ydl.download([url])
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"yt-dlp API successful: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("yt-dlp API output file not found or empty")
+        except Exception as ydl_err:
+            logger.warning(f"yt-dlp error: {str(ydl_err)}")
+        
+        # Method 3: Simplified yt-dlp approach
+        try:
+            logger.info("Trying simplified yt-dlp approach with different user agent")
+            ydl_opts = {
+                'format': 'best[height<=720]',  # Limit to 720p for better chance of success
+                'outtmpl': destination,
+                'cookiefile': cookie_file,
+                'quiet': False,
+                'verbose': True,
+                'no_warnings': False,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info("Downloading with simplified yt-dlp...")
+                ydl.download([url])
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"Simplified yt-dlp successful: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("Simplified yt-dlp output file not found or empty")
+        except Exception as simple_err:
+            logger.warning(f"Simplified yt-dlp error: {str(simple_err)}")
+        
+        # Method 4: Try with youtube-dl as a fallback
+        try:
+            logger.info("Trying youtube-dl as fallback")
+            import youtube_dl
+            
+            youtubedl_opts = {
+                'format': 'best',
+                'outtmpl': destination,
+                'cookiefile': cookie_file,
+                'quiet': False,
+                'no_warnings': False,
+            }
+            
+            with youtube_dl.YoutubeDL(youtubedl_opts) as ydl:
+                logger.info("Downloading with youtube-dl...")
+                ydl.download([url])
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"youtube-dl successful: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("youtube-dl output file not found or empty")
+        except Exception as ytd_err:
+            logger.warning(f"youtube-dl error: {str(ytd_err)}")
+        
+        # Method 5: Try with curl direct URL extraction (last resort for public videos)
+        if video_id:
+            try:
+                logger.info("Trying direct URL extraction with curl")
+                # Try to fetch the YouTube watch page
+                get_page_cmd = f"curl -s 'https://www.youtube.com/watch?v={video_id}' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'"
+                page_result = subprocess.run(get_page_cmd, shell=True, capture_output=True, text=True)
+                
+                # Look for a direct video URL or a URL from player response
+                import re
+                video_url_match = re.search(r'(?:"url":")(https://[^"]+\.mp4[^"]*)"', page_result.stdout)
+                
+                if video_url_match:
+                    direct_url = video_url_match.group(1).replace('\\u0026', '&')
+                    logger.info(f"Found direct video URL: {direct_url[:50]}...")
+                    
+                    # Download with curl
+                    download_cmd = f"curl -L '{direct_url}' -o '{destination}'"
+                    subprocess.run(download_cmd, shell=True, check=True)
+                    
+                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                        logger.info(f"Direct URL download successful: {os.path.getsize(destination)} bytes")
+                        return destination
+                    else:
+                        logger.warning("Direct URL download file not found or empty")
+                else:
+                    logger.warning("Could not find direct video URL in page source")
+            except Exception as curl_err:
+                logger.warning(f"Direct URL extraction error: {str(curl_err)}")
+                
+        # Method 6: As absolute last resort, try with pytube with cookie injection
+        try:
+            logger.info("Trying pytube with cookie injection as last resort")
+            from pytube import YouTube
+            
+            # Set up pytube with cookies if available
+            if cookie_file:
+                logger.info(f"Reading cookies from {cookie_file} for pytube")
+                cookies = {}
+                try:
+                    with open(cookie_file, 'r') as f:
+                        cookie_content = f.read()
+                        
+                    # Parse cookies
+                    cookie_matches = re.findall(r'\.youtube\.com\s+TRUE\s+\/\s+(TRUE|FALSE)\s+\d+\s+(\S+)\s+([^\s]+)', cookie_content)
+                    for _, name, value in cookie_matches:
+                        if name and value and not name.startswith('#'):
+                            cookies[name] = value
+                            
+                    logger.info(f"Extracted {len(cookies)} cookies for pytube")
+                except Exception as cookie_err:
+                    logger.warning(f"Error parsing cookies for pytube: {str(cookie_err)}")
+            
+            # Configure pytube
+            ytb = YouTube(url)
+            if cookies:
+                # Inject cookies into pytube session
+                for name, value in cookies.items():
+                    ytb._http.cookies.set(name, value, domain='.youtube.com')
+                
+            # Download highest quality MP4
+            logger.info("Finding highest resolution stream with pytube")
+            stream = ytb.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            
+            if not stream:
+                logger.info("No progressive streams found, trying adaptive streams")
+                stream = ytb.streams.filter(adaptive=True, file_extension='mp4').order_by('resolution').desc().first()
+            
+            if stream:
+                logger.info(f"Found stream: {stream.resolution}, {stream.mime_type}")
+                stream.download(output_path=os.path.dirname(destination), filename=os.path.basename(destination))
+                
+                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                    logger.info(f"Pytube download successful: {os.path.getsize(destination)} bytes")
+                    return destination
+                else:
+                    logger.warning("Pytube output file not found or empty")
+            else:
+                logger.warning("No suitable streams found with pytube")
+        except Exception as pytube_err:
+            logger.warning(f"Pytube error: {str(pytube_err)}")
+            
+        # Last resort - try with lower quality as it might bypass some restrictions
+        try:
+            logger.info("Trying lower quality download as ultimate fallback")
+            ydl_opts = {
+                'format': 'worst',  # Use lowest quality as a fallback
+                'outtmpl': destination,
+                'verbose': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info("Downloading lowest quality with yt-dlp...")
+                ydl.download([url])
+            
+            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                logger.info(f"Low quality download successful: {os.path.getsize(destination)} bytes")
+                return destination
+            else:
+                logger.warning("Low quality download file not found or empty")
+        except Exception as low_err:
+            logger.warning(f"Low quality download error: {str(low_err)}")
+        
+        # If we get here, all methods have failed
+        logger.error("All download methods failed")
+        raise Exception("Failed to download video from YouTube - bot detection or restricted content")
+            
+    except Exception as e:
+        logger.error(f"YouTube download error: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
