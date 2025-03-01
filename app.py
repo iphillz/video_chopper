@@ -251,7 +251,17 @@ def download_from_youtube(url, destination):
     logger.info(f"Starting YouTube download: {url}")
     
     try:
-        # Configure yt-dlp for best quality
+        # Check if aria2c is available
+        aria2c_available = False
+        try:
+            import subprocess
+            result = subprocess.run(['which', 'aria2c'], capture_output=True, text=True)
+            aria2c_available = result.returncode == 0
+            logger.info(f"aria2c available: {aria2c_available}")
+        except Exception:
+            logger.info("Could not check for aria2c, assuming not available")
+            
+        # Configure yt-dlp for best quality with additional options to bypass restrictions
         ydl_opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Get best quality
             'outtmpl': destination,  # Output filename
@@ -262,21 +272,128 @@ def download_from_youtube(url, destination):
             'retries': 10,           # Number of retries
             'fragment_retries': 10,  # Number of fragment retries
             'continuedl': True,      # Continue partial downloads
-            'merge_output_format': 'mp4'  # Ensure output is mp4
+            'merge_output_format': 'mp4',  # Ensure output is mp4
+            'nocheckcertificate': True,    # Skip HTTPS certificate validation
+            'geo_bypass': True,            # Bypass geo-restriction
+            'extractor_retries': 5,        # Retry extractor on error
+            'socket_timeout': 30,          # Socket timeout in seconds
+            'concurrent_fragment_downloads': 5,  # Download fragments in parallel
         }
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Starting YouTube download with yt-dlp: {url}")
-            ydl.download([url])
+        # Add aria2c if available
+        if aria2c_available:
+            ydl_opts.update({
+                'external_downloader': 'aria2c',  # Use aria2c for better downloading
+                'external_downloader_args': ['--min-split-size=1M', '--max-connection-per-server=16']
+            })
         
-        # Verify the download was successful
-        if os.path.exists(destination) and os.path.getsize(destination) > 0:
-            file_size = os.path.getsize(destination) / (1024 * 1024)
-            logger.info(f"YouTube download successful: {destination}, size: {file_size:.2f} MB")
-            return destination
-        else:
+        # Try with the best available options
+        try:
+            # Add cookies.txt if it exists
+            cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
+            if os.path.exists(cookies_file):
+                logger.info(f"Using cookies file: {cookies_file}")
+                ydl_opts['cookiefile'] = cookies_file
+                
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"Starting YouTube download with yt-dlp (primary method): {url}")
+                ydl.download([url])
+                
+                # Verify the download was successful
+                if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                    file_size = os.path.getsize(destination) / (1024 * 1024)
+                    logger.info(f"YouTube download successful: {destination}, size: {file_size:.2f} MB")
+                    return destination
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"Primary method failed: {error_msg}")
+            
+            # Check for specific errors and provide better handling
+            if "Sign in to confirm you're not a bot" in error_msg:
+                logger.warning("YouTube bot detection triggered. Trying fallback methods...")
+                
+                # Fallback method 1: Try with different user-agent
+                try:
+                    logger.info("Trying fallback method 1: Custom user-agent")
+                    ydl_opts.update({
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'referer': 'https://www.youtube.com/'
+                    })
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        logger.info("Trying download with custom user-agent")
+                        ydl.download([url])
+                        
+                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                            logger.info("Fallback with custom user-agent successful")
+                            return destination
+                except Exception as e2:
+                    logger.warning(f"Fallback with user-agent failed: {str(e2)}")
+                
+                # Fallback method 2: Try using pytube as an alternative
+                try:
+                    logger.info("Trying fallback method 2: pytube")
+                    from pytube import YouTube
+                    
+                    yt = YouTube(url)
+                    stream = yt.streams.get_highest_resolution()
+                    stream.download(filename=destination)
+                    
+                    if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                        file_size = os.path.getsize(destination) / (1024 * 1024)
+                        logger.info(f"Pytube download successful: {destination}, size: {file_size:.2f} MB")
+                        return destination
+                except Exception as e3:
+                    logger.warning(f"Pytube fallback failed: {str(e3)}")
+                
+                # Fallback method 3: Try using youtube-dl as a last resort
+                try:
+                    logger.info("Trying fallback method 3: youtube-dl")
+                    # Check if youtube-dl is installed
+                    try:
+                        import youtube_dl
+                        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                            logger.info("Trying download with youtube-dl")
+                            ydl.download([url])
+                            
+                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                logger.info("Fallback with youtube-dl successful")
+                                return destination
+                    except ImportError:
+                        logger.warning("youtube-dl not installed, skipping this fallback")
+                    except Exception as e4:
+                        logger.warning(f"youtube-dl fallback failed: {str(e4)}")
+                except Exception as e5:
+                    logger.warning(f"Error with youtube-dl fallback: {str(e5)}")
+                
+                # If all methods fail with bot detection, raise a more specific error
+                raise Exception(
+                    "YouTube bot protection prevented download. This usually happens when too many "
+                    "requests are made in a short time. Options: 1) Try again later, "
+                    "2) Use a direct Google Drive link instead, "
+                    "3) To resolve permanently, add a cookies.txt file from an authenticated YouTube session "
+                    "to the application directory."
+                )
+            elif "This video is unavailable" in error_msg:
+                raise Exception("This YouTube video is unavailable or has been removed.")
+            elif "Video unavailable. This video contains content from" in error_msg:
+                raise Exception("This YouTube video has content restrictions or copyright claims that prevent downloading.")
+            elif "Video unavailable" in error_msg:
+                raise Exception("This YouTube video is unavailable. It may be private, deleted, or region-restricted.")
+            elif "Private video" in error_msg:
+                raise Exception("This YouTube video is private and cannot be accessed.")
+            elif "Sign in to view" in error_msg:
+                raise Exception("This YouTube video requires authentication. Please use a public video.")
+            else:
+                # Re-raise the original error
+                raise
+        
+        # If we get here, the download wasn't verified as successful
+        if not os.path.exists(destination) or os.path.getsize(destination) == 0:
             logger.error("YouTube download failed: File is empty or missing")
             raise Exception("Downloaded YouTube file is empty or missing")
+        
+        return destination
     
     except Exception as e:
         logger.error(f"YouTube download failed: {str(e)}")

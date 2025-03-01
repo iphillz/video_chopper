@@ -4,4 +4,6 @@ yt-dlp==2023.7.6
 requests==2.31.0
 Werkzeug==2.0.3
 gunicorn==21.2.0
-flasgger==0.9.5 
+flasgger==0.9.5
+pytube==15.0.0
+youtube-dl==2021.12.17 # Optional fallback 
