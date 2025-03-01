@@ -13,6 +13,7 @@ from flasgger import Swagger, swag_from
 import yt_dlp
 import subprocess
 import random
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1043,6 +1044,267 @@ def download_from_youtube(url, destination=None):
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
+def download_from_youtube_proxy(url, destination=None):
+    """
+    Download a video from YouTube using proxy services that are less likely to be blocked.
+    
+    Args:
+        url (str): The URL of the YouTube video.
+        destination (str, optional): The path where the video should be saved.
+            If not provided, a default path will be generated.
+        
+    Returns:
+        str: The path to the downloaded file.
+    """
+    logger.info(f"Starting proxy download from YouTube URL: {url}")
+    
+    # Create videos directory if it doesn't exist
+    videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'videos')
+    os.makedirs(videos_dir, exist_ok=True)
+    
+    # Extract video ID from URL for better file naming
+    video_id = None
+    try:
+        if "youtube.com/watch?v=" in url:
+            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        
+        logger.info(f"Extracted video ID: {video_id}")
+    except Exception as e:
+        logger.warning(f"Error extracting video ID: {str(e)}")
+        video_id = None
+    
+    # If destination is not provided, generate a default one
+    if not destination:
+        # Generate a unique filename
+        timestamp = int(time.time())
+        filename = f"{video_id}_{timestamp}.mp4" if video_id else f"youtube_{timestamp}.mp4"
+        destination = os.path.join(videos_dir, filename)
+    
+    logger.info(f"Will download to: {destination}")
+    
+    # List of proxy services to try
+    proxy_services = [
+        # piped.video API - open source YouTube alternative
+        {
+            "name": "Piped",
+            "base_url": "https://pipedapi.kavin.rocks",
+            "url_format": "https://pipedapi.kavin.rocks/streams/{video_id}",
+            "download_method": "piped"
+        },
+        # Invidious API - another YouTube alternative
+        {
+            "name": "Invidious",
+            "base_url": "https://invidious.snopyta.org",
+            "url_format": "https://invidious.snopyta.org/api/v1/videos/{video_id}",
+            "download_method": "invidious"
+        },
+        # Alternative Invidious instance
+        {
+            "name": "Invidious Alternative",
+            "base_url": "https://yewtu.be",
+            "url_format": "https://yewtu.be/api/v1/videos/{video_id}",
+            "download_method": "invidious"
+        },
+        # youtube-dl-server API if set up
+        {
+            "name": "YoutubeDL Server",
+            "base_url": os.environ.get("YOUTUBE_DL_SERVER", ""),
+            "url_format": "{base_url}/api/info?url=https://www.youtube.com/watch?v={video_id}&flatten=True",
+            "download_method": "youtube_dl_server"
+        }
+    ]
+    
+    success = False
+    error_messages = []
+    
+    # Try each proxy service until one works
+    for service in proxy_services:
+        if not video_id and service["download_method"] in ["piped", "invidious", "youtube_dl_server"]:
+            logger.warning(f"Skipping {service['name']} as video_id could not be extracted")
+            continue
+            
+        if service["download_method"] == "youtube_dl_server" and not service["base_url"]:
+            logger.warning("Skipping YoutubeDL Server as base URL is not set")
+            continue
+        
+        logger.info(f"Trying to download using {service['name']} proxy service")
+        
+        try:
+            if service["download_method"] == "piped":
+                # Piped API approach
+                api_url = service["url_format"].format(video_id=video_id)
+                logger.info(f"Requesting stream info from Piped API: {api_url}")
+                
+                response = requests.get(api_url, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Look for video streams
+                    if "videoStreams" in data and data["videoStreams"]:
+                        # Sort by quality (height)
+                        video_streams = sorted(
+                            data["videoStreams"], 
+                            key=lambda x: int(x.get("height", 0)), 
+                            reverse=True
+                        )
+                        
+                        # Get highest quality with reasonable size
+                        selected_stream = None
+                        for stream in video_streams:
+                            if stream.get("height", 0) <= 720:  # Limit to 720p to avoid getting blocked
+                                selected_stream = stream
+                                break
+                        
+                        if not selected_stream and video_streams:
+                            selected_stream = video_streams[-1]  # Use lowest quality if no 720p
+                        
+                        if selected_stream and "url" in selected_stream:
+                            video_url = selected_stream["url"]
+                            logger.info(f"Found video URL via Piped API: {video_url[:50]}...")
+                            
+                            # Download video
+                            with requests.get(video_url, stream=True) as r:
+                                r.raise_for_status()
+                                with open(destination, 'wb') as f:
+                                    for chunk in r.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                            
+                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                logger.info(f"Piped API download successful: {os.path.getsize(destination)} bytes")
+                                success = True
+                                return destination
+                    
+                    # If video-only, look for audio streams to download separately
+                    elif "audioStreams" in data and data["audioStreams"]:
+                        logger.info("No video streams found. Trying audio-only format.")
+                        audio_streams = sorted(
+                            data["audioStreams"], 
+                            key=lambda x: int(x.get("bitrate", 0)), 
+                            reverse=True
+                        )
+                        
+                        if audio_streams and "url" in audio_streams[0]:
+                            audio_url = audio_streams[0]["url"]
+                            logger.info(f"Found audio URL via Piped API: {audio_url[:50]}...")
+                            
+                            # Download audio
+                            with requests.get(audio_url, stream=True) as r:
+                                r.raise_for_status()
+                                with open(destination, 'wb') as f:
+                                    for chunk in r.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                            
+                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                logger.info(f"Piped API audio download successful: {os.path.getsize(destination)} bytes")
+                                success = True
+                                return destination
+                
+            elif service["download_method"] == "invidious":
+                # Invidious API approach
+                api_url = service["url_format"].format(video_id=video_id)
+                logger.info(f"Requesting video info from Invidious API: {api_url}")
+                
+                response = requests.get(api_url, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if "adaptiveFormats" in data:
+                        formats = data["adaptiveFormats"]
+                        
+                        # Get video formats and sort by quality
+                        video_formats = [f for f in formats if "video" in f.get("type", "")]
+                        video_formats.sort(key=lambda x: x.get("height", 0), reverse=True)
+                        
+                        selected_format = None
+                        for video_format in video_formats:
+                            if video_format.get("height", 0) <= 720:  # Limit to 720p
+                                selected_format = video_format
+                                break
+                                
+                        if not selected_format and video_formats:
+                            selected_format = video_formats[-1]  # Use lowest quality if no 720p
+                        
+                        if selected_format and "url" in selected_format:
+                            video_url = selected_format["url"]
+                            logger.info(f"Found video URL via Invidious API: {video_url[:50]}...")
+                            
+                            # Download video
+                            with requests.get(video_url, stream=True) as r:
+                                r.raise_for_status()
+                                with open(destination, 'wb') as f:
+                                    for chunk in r.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                            
+                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                logger.info(f"Invidious API download successful: {os.path.getsize(destination)} bytes")
+                                success = True
+                                return destination
+            
+            elif service["download_method"] == "youtube_dl_server":
+                # Use a dedicated youtube-dl server if available
+                api_url = service["url_format"].format(
+                    base_url=service["base_url"],
+                    video_id=video_id
+                )
+                logger.info(f"Requesting from youtube-dl server: {api_url}")
+                
+                response = requests.get(api_url, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if "formats" in data:
+                        formats = data["formats"]
+                        
+                        # Filter and sort by quality
+                        video_formats = [f for f in formats if f.get("height") and f.get("width")]
+                        video_formats.sort(key=lambda x: int(x.get("height", 0)), reverse=True)
+                        
+                        selected_format = None
+                        for video_format in video_formats:
+                            if video_format.get("height", 0) <= 720:  # Limit to 720p
+                                selected_format = video_format
+                                break
+                                
+                        if not selected_format and video_formats:
+                            selected_format = video_formats[-1]  # Use lowest quality if no 720p
+                        
+                        if selected_format and "url" in selected_format:
+                            video_url = selected_format["url"]
+                            logger.info(f"Found video URL via youtube-dl server: {video_url[:50]}...")
+                            
+                            # Download video
+                            with requests.get(video_url, stream=True) as r:
+                                r.raise_for_status()
+                                with open(destination, 'wb') as f:
+                                    for chunk in r.iter_content(chunk_size=8192):
+                                        f.write(chunk)
+                            
+                            if os.path.exists(destination) and os.path.getsize(destination) > 0:
+                                logger.info(f"youtube-dl server download successful: {os.path.getsize(destination)} bytes")
+                                success = True
+                                return destination
+        
+        except Exception as e:
+            error_message = f"Error with {service['name']}: {str(e)}"
+            logger.warning(error_message)
+            error_messages.append(error_message)
+    
+    # If all proxy services fail, try the regular download method as a last resort
+    try:
+        logger.info("All proxy services failed. Trying regular download method as last resort.")
+        return download_from_youtube(url, destination)
+    except Exception as e:
+        error_message = f"Regular download method also failed: {str(e)}"
+        logger.error(error_message)
+        error_messages.append(error_message)
+    
+    # If we reach here, all methods have failed
+    error_details = "\n".join(error_messages)
+    logger.error(f"All download methods failed. Errors:\n{error_details}")
+    raise Exception(f"Failed to download video from YouTube using all available methods. Try a different video or try again later.")
+
 def process_video(input_path, timestamps, output_path):
     """Process the video based on given timestamps."""
     logger.info(f"Opening video file: {input_path}")
@@ -1348,6 +1610,78 @@ def process_youtube_job(job_id, youtube_url, timestamps):
             "message": f"Unexpected error: {str(e)}"
         })
 
+def process_youtube_proxy_job(job_id, youtube_url, timestamps):
+    """Background job to process a YouTube video using proxy services."""
+    try:
+        # Update job status to processing
+        jobs[job_id]["status"] = "processing"
+        
+        # Create a temp directory for downloads
+        temp_dir = tempfile.mkdtemp()
+        input_file = os.path.join(temp_dir, "input_video.mp4")
+        
+        try:
+            # Download from YouTube using proxy
+            jobs[job_id]["message"] = "Downloading video from YouTube via proxy service..."
+            logger.info(f"Starting proxy download from YouTube: {youtube_url}")
+            
+            download_from_youtube_proxy(youtube_url, input_file)
+            
+            # Check if file exists and has content
+            if not os.path.exists(input_file) or os.path.getsize(input_file) == 0:
+                raise Exception("Downloaded file is empty or does not exist")
+            
+            jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
+            
+            # Generate unique output filename
+            output_filename = f"{uuid.uuid4()}.mp4"
+            output_path = os.path.join(VIDEO_DIR, output_filename)
+            
+            # Process video
+            jobs[job_id]["message"] = f"Processing video with {len(timestamps)} timestamp pairs..."
+            logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
+            process_video(input_file, timestamps, output_path)
+            
+            # Generate download URL - use full URL including hostname
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            if request and request.host:
+                server_name = request.host
+            
+            protocol = os.environ.get('PROTOCOL', 'https')
+            download_url = f"{protocol}://{server_name}/download/{output_filename}"
+            
+            # Update job status
+            jobs[job_id]["status"] = "completed"
+            jobs[job_id]["message"] = "Video processing completed successfully"
+            jobs[job_id]["output_file"] = output_filename
+            jobs[job_id]["download_url"] = download_url
+            
+            logger.info(f"Job {job_id} completed successfully. Output: {output_path}")
+            return output_path
+        
+        except Exception as e:
+            logger.error(f"Error processing YouTube video via proxy: {str(e)}")
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["message"] = f"Error: {str(e)}"
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+        
+        finally:
+            # Clean up temp directory
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    logger.warning(f"Failed to remove temp directory {temp_dir}: {str(e)}")
+    
+    except Exception as e:
+        logger.error(f"Unhandled exception in process_youtube_proxy_job: {str(e)}")
+        if job_id in jobs:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["message"] = f"Unhandled error: {str(e)}"
+        raise
+
 @app.route('/process_google_drive', methods=['POST'])
 @swag_from({
     'tags': ['Video Processing'],
@@ -1558,6 +1892,144 @@ def process_youtube():
         logger.error(f"Unexpected error: {str(e)}")
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
+@app.route('/process_youtube_proxy', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Process video from YouTube using proxy services',
+    'description': 'Downloads a video from YouTube using proxy services to bypass restrictions, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['youtube_url', 'timestamps'],
+                'properties': {
+                    'youtube_url': {
+                        'type': 'string',
+                        'description': 'YouTube video URL',
+                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                    },
+                    'timestamps': {
+                        'type': 'array',
+                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'items': {
+                            'type': 'array',
+                            'items': {'type': 'number'},
+                            'minItems': 2,
+                            'maxItems': 2
+                        },
+                        'example': [[10, 20], [30, 45], [60, 70]]
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '202': {
+            'description': 'Job accepted for processing',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'job_id': {'type': 'string'},
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'status_url': {'type': 'string'}
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
+def process_youtube_proxy():
+    """Process YouTube video using proxy services (endpoint handler)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+            
+        # Validate required parameters
+        if "youtube_url" not in data:
+            return jsonify({"error": "Missing required parameter: youtube_url"}), 400
+            
+        if "timestamps" not in data:
+            return jsonify({"error": "Missing required parameter: timestamps"}), 400
+            
+        youtube_url = data["youtube_url"]
+        timestamps = data["timestamps"]
+        
+        # Validate URL
+        if not youtube_url or not isinstance(youtube_url, str):
+            return jsonify({"error": "Invalid YouTube URL"}), 400
+            
+        # Basic validation of YouTube URL format
+        if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
+            return jsonify({"error": "Invalid YouTube URL format"}), 400
+            
+        # Validate timestamps
+        if not isinstance(timestamps, list) or not timestamps:
+            return jsonify({"error": "timestamps must be a non-empty array"}), 400
+            
+        for pair in timestamps:
+            if not isinstance(pair, list) or len(pair) != 2:
+                return jsonify({"error": "Each timestamp must be a pair [start, end]"}), 400
+                
+            if not all(isinstance(t, (int, float)) and t >= 0 for t in pair):
+                return jsonify({"error": "Timestamps must be non-negative numbers"}), 400
+                
+            if pair[1] <= pair[0]:
+                return jsonify({"error": "End time must be greater than start time"}), 400
+                
+        # Create a job ID
+        job_id = str(uuid.uuid4())
+        
+        # Create a job entry
+        jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "message": "Job queued",
+            "created_at": datetime.now().isoformat(),
+            "type": "youtube_proxy"
+        }
+        
+        # Generate status URL
+        protocol = os.environ.get('PROTOCOL', 'https')
+        server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+        if request and request.host:
+            server_name = request.host
+            
+        status_url = f"{protocol}://{server_name}/job/{job_id}"
+        
+        # Start processing in a background thread
+        thread = threading.Thread(
+            target=process_youtube_proxy_job,
+            args=(job_id, youtube_url, timestamps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job accepted and queued for processing",
+            "status_url": status_url
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in process_youtube_proxy endpoint: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 400
+
 @app.route('/job/<job_id>', methods=['GET'])
 @swag_from({
     'tags': ['Job Status'],
@@ -1738,6 +2210,7 @@ def index():
         "endpoints": [
             {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
             {"path": "/process_youtube", "method": "POST", "description": "Process video from YouTube"},
+            {"path": "/process_youtube_proxy", "method": "POST", "description": "Process video from YouTube using proxy services"},
             {"path": "/job/<job_id>", "method": "GET", "description": "Check job status"},
             {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
             {"path": "/download_url/<job_id>", "method": "GET", "description": "Get just the download URL for a processed video"},
