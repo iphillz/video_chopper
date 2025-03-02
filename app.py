@@ -1712,7 +1712,11 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
 @swag_from({
     'tags': ['Video Processing'],
     'summary': 'Process video from Google Drive',
-    'description': 'Downloads a video from Google Drive, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'description': 'Downloads a video from Google Drive, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.\n\n'
+                  'TIMESTAMP FORMATS:\n'
+                  '1. Array format: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
+                  '2. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  'The API will create a video that includes only the specified segments and concatenate them together.',
     'parameters': [
         {
             'name': 'body',
@@ -1729,7 +1733,7 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds. Each pair defines a segment to extract from the video. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -1740,8 +1744,8 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                     },
                     'detailed_timestamps': {
                         'type': 'string',
-                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
-                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
                     }
                 }
             }
@@ -1861,7 +1865,11 @@ def process_google_drive():
 @swag_from({
     'tags': ['Video Processing'],
     'summary': 'Process video from YouTube',
-    'description': 'Downloads a video from YouTube at maximum resolution, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'description': 'Downloads a video from YouTube at maximum resolution, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.\n\n'
+                  'TIMESTAMP FORMATS:\n'
+                  '1. Array format: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
+                  '2. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  'The API will create a video that includes only the specified segments and concatenate them together.',
     'parameters': [
         {
             'name': 'body',
@@ -1878,7 +1886,7 @@ def process_google_drive():
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds. Each pair defines a segment to extract from the video. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -1889,8 +1897,8 @@ def process_google_drive():
                     },
                     'detailed_timestamps': {
                         'type': 'string',
-                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
-                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
                     }
                 }
             }
@@ -2010,7 +2018,11 @@ def process_youtube():
 @swag_from({
     'tags': ['Video Processing'],
     'summary': 'Process video from YouTube using proxy services',
-    'description': 'Downloads a video from YouTube using proxy services to bypass restrictions, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'description': 'Downloads a video from YouTube using proxy services to bypass restrictions, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.\n\n'
+                  'TIMESTAMP FORMATS:\n'
+                  '1. Array format: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
+                  '2. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  'The API will create a video that includes only the specified segments and concatenate them together.',
     'parameters': [
         {
             'name': 'body',
@@ -2027,7 +2039,7 @@ def process_youtube():
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds. Each pair defines a segment to extract from the video. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -2038,8 +2050,8 @@ def process_youtube():
                     },
                     'detailed_timestamps': {
                         'type': 'string',
-                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
-                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
                     }
                 }
             }
@@ -2548,40 +2560,66 @@ def download_file(filename):
 def parse_detailed_timestamps(timestamps_str):
     """
     Parse detailed timestamps in the format: "HH:MM:SS.mmm text,HH:MM:SS.mmm text"
-    and convert them to an array of [start, end] pairs in seconds.
+    and convert them to an array of [in_point, out_point] pairs in seconds.
     
     Args:
         timestamps_str (str): Comma-separated string of timestamp-text pairs
         
     Returns:
-        list: Array of [start, end] pairs in seconds
+        list: Array of [in_point, out_point] pairs in seconds
     """
     logger.info(f"Parsing detailed timestamps: {timestamps_str}")
     
-    # Extract all timestamps using regex
-    pattern = r'(\d{2}:\d{2}:\d{2}\.\d{3})'
+    # Extract all timestamps using regex - support both with and without milliseconds
+    pattern = r'(\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)'
     matches = re.findall(pattern, timestamps_str)
     
     if not matches or len(matches) < 2:
         logger.error(f"Could not extract at least two timestamps from: {timestamps_str}")
-        raise ValueError("At least two timestamps are required to create segments")
+        raise ValueError("At least two timestamps are required to create segments. Format should be: 00:00:00.000 text,00:00:10.000 text")
     
     # Convert timestamps to seconds
     def time_to_seconds(time_str):
-        h, m, s = time_str.split(':')
-        seconds = float(h) * 3600 + float(m) * 60 + float(s)
-        return seconds
+        parts = time_str.split(':')
+        if len(parts) != 3:
+            logger.warning(f"Invalid time format: {time_str}")
+            raise ValueError(f"Invalid time format: {time_str}. Expected format is HH:MM:SS or HH:MM:SS.mmm")
+        
+        h, m, s = parts
+        # Handle milliseconds if present
+        if '.' in s:
+            s_parts = s.split('.')
+            seconds = float(s_parts[0])
+            milliseconds = float('0.' + s_parts[1])
+            seconds += milliseconds
+        else:
+            seconds = float(s)
+        
+        return float(h) * 3600 + float(m) * 60 + seconds
     
-    timestamp_seconds = [time_to_seconds(t) for t in matches]
+    # Try to convert each timestamp to seconds
+    timestamp_seconds = []
+    for t in matches:
+        try:
+            seconds = time_to_seconds(t)
+            timestamp_seconds.append(seconds)
+        except Exception as e:
+            logger.warning(f"Failed to convert timestamp {t} to seconds: {str(e)}")
     
-    # Create [start, end] pairs from consecutive timestamps
+    if len(timestamp_seconds) < 2:
+        logger.error("Not enough valid timestamps to create segments")
+        raise ValueError("At least two valid timestamps are required to create segments")
+    
+    # Create [in_point, out_point] pairs from consecutive timestamps
     pairs = []
     for i in range(len(timestamp_seconds) - 1):
-        start = timestamp_seconds[i]
-        end = timestamp_seconds[i + 1]
+        in_point = timestamp_seconds[i]
+        out_point = timestamp_seconds[i + 1]
         # Only include if there's a reasonable duration (over 0.1 seconds)
-        if end - start > 0.1:
-            pairs.append([start, end])
+        if out_point - in_point > 0.1:
+            pairs.append([in_point, out_point])
+        else:
+            logger.warning(f"Skipping segment with very short duration: {in_point} to {out_point}")
     
     logger.info(f"Converted to {len(pairs)} timestamp pairs: {pairs}")
     return pairs
