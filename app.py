@@ -2395,6 +2395,108 @@ def generate_enhanced_youtube_cookies():
     logger.info(f"Generated enhanced cookie file at: {temp_cookie_file}")
     return temp_cookie_file
 
+@app.route('/download/<filename>', methods=['GET', 'OPTIONS'])
+@swag_from({
+    'tags': ['Video Download'],
+    'summary': 'Download a processed video file',
+    'description': 'Serves the processed video file for direct download',
+    'parameters': [
+        {
+            'name': 'filename',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'Filename of the processed video'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Video file or successful OPTIONS response',
+            'content': {
+                'video/mp4': {
+                    'schema': {
+                        'type': 'string',
+                        'format': 'binary'
+                    }
+                },
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'status': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '404': {
+            'description': 'File not found',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'},
+                            'success': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'schemes': ['https'],
+    'produces': ['video/mp4', 'application/json']
+})
+def download_file(filename):
+    """Serve a processed video file for download with proper CORS headers."""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response
+        
+    logging.info(f"Download request for file: {filename}")
+    
+    try:
+        # Check if file exists before attempting to serve it
+        file_path = os.path.join(VIDEO_DIR, filename)
+        if not os.path.isfile(file_path):
+            logging.error(f"File not found: {file_path}")
+            response = jsonify({
+                'error': 'File not found',
+                'success': False
+            })
+            # Add CORS headers
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Methods', 'GET')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+            return response, 404
+        
+        # Serve the file with CORS headers
+        response = send_from_directory(
+            VIDEO_DIR, 
+            filename, 
+            as_attachment=True, 
+            mimetype='video/mp4'
+        )
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response
+        
+    except Exception as e:
+        logging.error(f"Error serving file {filename}: {str(e)}")
+        response = jsonify({
+            'error': f'Error serving file: {str(e)}',
+            'success': False
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response, 500
+
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 3000))) 
