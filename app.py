@@ -104,7 +104,7 @@ swagger_template = {
         },
         "version": "1.0.0",
     },
-    "schemes": ["http", "https"],
+    "schemes": ["https"],  # Use only HTTPS scheme
     "host": "",  # Let Swagger figure out host
     "basePath": "/",  # Set base path to root
 }
@@ -2633,29 +2633,84 @@ def download_youtube_highest_quality(url):
     'responses': {
         '200': {
             'description': 'Video download information',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'success': {'type': 'boolean'},
-                    'download_url': {'type': 'string'},
-                    'file_size': {'type': 'integer'},
-                    'video_id': {'type': 'string'},
-                    'quality': {'type': 'string'},
-                    'fps': {'type': 'string'},
-                    'error': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'success': {'type': 'boolean'},
+                            'download_url': {'type': 'string'},
+                            'file_size': {'type': 'integer'},
+                            'video_id': {'type': 'string'},
+                            'quality': {'type': 'string'},
+                            'fps': {'type': 'string'},
+                            'error': {'type': 'string'}
+                        }
+                    }
                 }
             }
         },
         '400': {
             'description': 'Bad request parameters',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '503': {
+            'description': 'Service unavailable - YouTube blocking download attempts',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'success': {'type': 'boolean'},
+                            'error': {'type': 'string'},
+                            'youtube_url': {'type': 'string'},
+                            'alternative_solution': {
+                                'type': 'object',
+                                'properties': {
+                                    'message': {'type': 'string'},
+                                    'command': {'type': 'string'},
+                                    'installation': {'type': 'string'}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        '500': {
+            'description': 'Server error',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'},
+                            'success': {'type': 'boolean'},
+                            'alternative_solution': {
+                                'type': 'object',
+                                'properties': {
+                                    'message': {'type': 'string'},
+                                    'command': {'type': 'string'},
+                                    'installation': {'type': 'string'}
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-    }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
 })
 def download_youtube_endpoint():
     """Download a YouTube video in highest quality without processing."""
@@ -2667,12 +2722,16 @@ def download_youtube_endpoint():
         if not data:
             logger.warning("No JSON data provided in request")
             response = jsonify({"error": "No JSON data provided"})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 400
             
         # Validate required parameters
         if "youtube_url" not in data:
             logger.warning("Missing required parameter: youtube_url")
             response = jsonify({"error": "Missing required parameter: youtube_url"})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 400
             
         youtube_url = data["youtube_url"]
@@ -2681,12 +2740,16 @@ def download_youtube_endpoint():
         if not youtube_url or not isinstance(youtube_url, str):
             logger.warning(f"Invalid YouTube URL: {youtube_url}")
             response = jsonify({"error": "Invalid YouTube URL"})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 400
             
         # Basic validation of YouTube URL format
         if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
             logger.warning(f"Invalid YouTube URL format: {youtube_url}")
             response = jsonify({"error": "Invalid YouTube URL format"})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 400
             
         # Extract video ID for use in the command suggestion
@@ -2715,6 +2778,7 @@ def download_youtube_endpoint():
             })
             # Add CORS headers explicitly to ensure they are included in the response
             response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 200
         else:
             # Create helpful error message with yt-dlp command suggestion
@@ -2739,6 +2803,7 @@ def download_youtube_endpoint():
             response = jsonify(response_data)
             # Add CORS headers explicitly to ensure they are included in the response
             response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Content-Type', 'application/json')
             return response, 503  # Service Unavailable - better status code for this case
         
     except Exception as e:
@@ -2759,6 +2824,7 @@ def download_youtube_endpoint():
         })
         # Add CORS headers explicitly to ensure they are included in the response
         response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Content-Type', 'application/json')
         return response, 500
 
 def generate_download_url(filename):
