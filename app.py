@@ -56,6 +56,9 @@ CORS(app, resources={r"/*": {
     "max_age": 86400  # 24 hours
 }})
 
+# Configure Flask to prefer HTTPS for url_for with _external=True
+app.config['PREFERRED_URL_SCHEME'] = 'https'
+
 # Add an OPTIONS method handler for all routes to support preflight requests
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
 @app.route('/<path:path>', methods=['OPTIONS'])
@@ -1538,11 +1541,8 @@ def process_video_job(job_id, google_drive_link, timestamps):
             logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
             process_video(input_file, timestamps, output_path)
             
-            # Generate download URL - use full URL including hostname
-            # Get the server name from request context or use environment variable
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-            protocol = os.environ.get('PROTOCOL', 'http')
-            download_url = f"{protocol}://{server_name}/download/{output_filename}"
+            # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+            download_url = generate_download_url(output_filename)
             
             # Update job status to complete
             jobs[job_id].update({
@@ -1602,10 +1602,8 @@ def process_youtube_job(job_id, youtube_url, timestamps):
             logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
             process_video(input_file, timestamps, output_path)
             
-            # Generate download URL - use full URL including hostname
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-            protocol = os.environ.get('PROTOCOL', 'http')
-            download_url = f"{protocol}://{server_name}/download/{output_filename}"
+            # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+            download_url = generate_download_url(output_filename)
             
             # Update job status to complete
             jobs[job_id].update({
@@ -1665,13 +1663,8 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
             logger.info(f"Processing video with {len(timestamps)} timestamp pairs")
             process_video(input_file, timestamps, output_path)
             
-            # Generate download URL - use full URL including hostname
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-            if request and request.host:
-                server_name = request.host
-            
-            protocol = os.environ.get('PROTOCOL', 'https')
-            download_url = f"{protocol}://{server_name}/download/{output_filename}"
+            # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+            download_url = generate_download_url(output_filename)
             
             # Update job status
             jobs[job_id]["status"] = "completed"
@@ -1765,19 +1758,28 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
 })
 def process_google_drive():
     try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_google_drive with headers: {dict(request.headers)}")
+        
         data = request.get_json()
         
         if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         google_drive_link = data.get('google_drive_link')
         timestamps = data.get('timestamps')
         
         if not google_drive_link:
-            return jsonify({"error": "No Google Drive link provided"}), 400
+            error_response = jsonify({"error": "No Google Drive link provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         if not timestamps or not isinstance(timestamps, list):
-            return jsonify({"error": "Invalid or missing timestamps"}), 400
+            error_response = jsonify({"error": "Invalid or missing timestamps"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         # Create a job ID
         job_id = str(uuid.uuid4())
@@ -1799,16 +1801,21 @@ def process_google_drive():
         
         # Return job ID and status URL
         status_url = url_for('job_status', job_id=job_id, _external=True)
-        return jsonify({
+        response = jsonify({
             "job_id": job_id,
             "status": "queued",
             "message": "Job queued for processing",
             "status_url": status_url
-        }), 202
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
     
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 @app.route('/process_youtube', methods=['POST'])
 @swag_from({
@@ -1870,19 +1877,28 @@ def process_google_drive():
 })
 def process_youtube():
     try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_youtube with headers: {dict(request.headers)}")
+        
         data = request.get_json()
         
         if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         youtube_url = data.get('youtube_url')
         timestamps = data.get('timestamps')
         
         if not youtube_url:
-            return jsonify({"error": "No YouTube URL provided"}), 400
+            error_response = jsonify({"error": "No YouTube URL provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         if not timestamps or not isinstance(timestamps, list):
-            return jsonify({"error": "Invalid or missing timestamps"}), 400
+            error_response = jsonify({"error": "Invalid or missing timestamps"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
         # Create a job ID
         job_id = str(uuid.uuid4())
@@ -1904,16 +1920,21 @@ def process_youtube():
         
         # Return job ID and status URL
         status_url = url_for('job_status', job_id=job_id, _external=True)
-        return jsonify({
+        response = jsonify({
             "job_id": job_id,
             "status": "queued",
             "message": "Job queued for processing",
             "status_url": status_url
-        }), 202
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
     
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 @app.route('/process_youtube_proxy', methods=['POST'])
 @swag_from({
@@ -1974,65 +1995,41 @@ def process_youtube():
     }
 })
 def process_youtube_proxy():
-    """Process YouTube video using proxy services (endpoint handler)."""
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-            
-        # Validate required parameters
-        if "youtube_url" not in data:
-            return jsonify({"error": "Missing required parameter: youtube_url"}), 400
-            
-        if "timestamps" not in data:
-            return jsonify({"error": "Missing required parameter: timestamps"}), 400
-            
-        youtube_url = data["youtube_url"]
-        timestamps = data["timestamps"]
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_youtube_proxy with headers: {dict(request.headers)}")
         
-        # Validate URL
-        if not youtube_url or not isinstance(youtube_url, str):
-            return jsonify({"error": "Invalid YouTube URL"}), 400
-            
-        # Basic validation of YouTube URL format
-        if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
-            return jsonify({"error": "Invalid YouTube URL format"}), 400
-            
-        # Validate timestamps
-        if not isinstance(timestamps, list) or not timestamps:
-            return jsonify({"error": "timestamps must be a non-empty array"}), 400
-            
-        for pair in timestamps:
-            if not isinstance(pair, list) or len(pair) != 2:
-                return jsonify({"error": "Each timestamp must be a pair [start, end]"}), 400
-                
-            if not all(isinstance(t, (int, float)) and t >= 0 for t in pair):
-                return jsonify({"error": "Timestamps must be non-negative numbers"}), 400
-                
-            if pair[1] <= pair[0]:
-                return jsonify({"error": "End time must be greater than start time"}), 400
-                
+        data = request.get_json()
+        
+        if not data:
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        youtube_url = data.get('youtube_url')
+        timestamps = data.get('timestamps')
+        
+        if not youtube_url:
+            error_response = jsonify({"error": "No YouTube URL provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        if not timestamps or not isinstance(timestamps, list):
+            error_response = jsonify({"error": "Invalid or missing timestamps"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
         # Create a job ID
         job_id = str(uuid.uuid4())
         
-        # Create a job entry
+        # Initialize job status
         jobs[job_id] = {
-            "id": job_id,
             "status": "queued",
-            "message": "Job queued",
-            "created_at": datetime.now().isoformat(),
-            "type": "youtube_proxy"
+            "message": "Job queued for processing",
+            "created_at": time.time()
         }
         
-        # Generate status URL
-        protocol = os.environ.get('PROTOCOL', 'https')
-        server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-        if request and request.host:
-            server_name = request.host
-            
-        status_url = f"{protocol}://{server_name}/job/{job_id}"
-        
-        # Start processing in a background thread
+        # Start background thread to process video
         thread = threading.Thread(
             target=process_youtube_proxy_job,
             args=(job_id, youtube_url, timestamps)
@@ -2040,18 +2037,23 @@ def process_youtube_proxy():
         thread.daemon = True
         thread.start()
         
-        return jsonify({
+        # Return job ID and status URL
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        response = jsonify({
             "job_id": job_id,
             "status": "queued",
-            "message": "Job accepted and queued for processing",
+            "message": "Job queued for processing",
             "status_url": status_url
-        }), 202
-        
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
+    
     except Exception as e:
-        logger.error(f"Error in process_youtube_proxy endpoint: {str(e)}")
-        import traceback
+        logger.error(f"Unexpected error: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 400
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 @app.route('/job/<job_id>', methods=['GET'])
 @swag_from({
@@ -2094,7 +2096,9 @@ def process_youtube_proxy():
 def job_status(job_id):
     """Endpoint to check the status of a job."""
     if job_id not in jobs:
-        return jsonify({"error": "Job not found"}), 404
+        error_response = jsonify({"error": "Job not found"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 404
     
     job = jobs[job_id].copy()
     job["job_id"] = job_id
@@ -2106,7 +2110,9 @@ def job_status(job_id):
         if j["status"] in ["completed", "failed"] and current_time - j.get("created_at", 0) > 3600:
             jobs.pop(jid, None)
     
-    return jsonify(job)
+    response = jsonify(job)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 @app.route('/download/<filename>', methods=['GET'])
 @swag_from({
@@ -2199,18 +2205,31 @@ def download(filename):
 def download_url(job_id):
     """Endpoint to get just the download URL for a completed job."""
     if job_id not in jobs:
-        return "Job not found", 404
+        error_response = "Job not found"
+        # Add CORS headers
+        response = app.response_class(error_response, mimetype='text/plain')
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 404
     
     job = jobs[job_id]
     
     if job["status"] == "completed" and "download_url" in job:
         # Return just the URL as plain text for easy integration
-        return job["download_url"]
+        url_response = job["download_url"]
+        response = app.response_class(url_response, mimetype='text/plain')
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
     elif job["status"] == "failed":
-        return f"Job failed: {job.get('message', 'Unknown error')}", 500
+        error_message = f"Job failed: {job.get('message', 'Unknown error')}"
+        response = app.response_class(error_message, mimetype='text/plain')
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
     else:
         # Job is still processing
-        return f"Job is {job['status']}, please check back later", 202
+        status_message = f"Job is {job['status']}, please check back later"
+        response = app.response_class(status_message, mimetype='text/plain')
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
 
 @app.route('/health', methods=['GET'])
 @swag_from({
@@ -2258,7 +2277,7 @@ def health_check():
 @app.route('/', methods=['GET'])
 def index():
     """Root endpoint, redirects to API documentation."""
-    return jsonify({
+    response = jsonify({
         "name": "Video Chopper API",
         "version": "1.0.0",
         "documentation": "/docs",
@@ -2273,11 +2292,15 @@ def index():
             {"path": "/docs", "method": "GET", "description": "API documentation"}
         ]
     })
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 # Add a simple route that redirects to /docs
 @app.route('/swagger', methods=['GET'])
 def swagger_ui():
-    return redirect('/docs', code=302)
+    response = redirect('/docs', code=302)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 # Add this new function after the existing download functions
 
