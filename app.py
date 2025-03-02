@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
+from flask_cors import CORS
 import requests
 import tempfile
 from moviepy.editor import VideoFileClip, concatenate_videoclips
@@ -45,6 +46,8 @@ except ImportError:
     logger.warning("Undetected Chromedriver is not available, stealth browser downloads will be skipped")
 
 app = Flask(__name__)
+# Enable CORS for all routes
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Configure Swagger
 swagger_config = {
@@ -2183,23 +2186,31 @@ def download_url(job_id):
 @app.route('/health', methods=['GET'])
 @swag_from({
     'tags': ['System'],
-    'summary': 'Health check',
-    'description': 'Returns the status of the API',
+    'summary': 'Check API health',
+    'description': 'Returns the health status of the API.',
     'responses': {
         '200': {
-            'description': 'API status',
+            'description': 'API health information',
             'schema': {
                 'type': 'object',
                 'properties': {
-                    'status': {'type': 'string'}
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'timestamp': {'type': 'string'},
+                    'version': {'type': 'string'}
                 }
             }
         }
     }
 })
 def health_check():
-    """Health check endpoint."""
-    return jsonify({"status": "healthy"})
+    """Check the health of the API."""
+    return jsonify({
+        'status': 'healthy',
+        'message': 'API is running correctly',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0'
+    }), 200
 
 @app.route('/', methods=['GET'])
 def index():
