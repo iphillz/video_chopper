@@ -1720,7 +1720,7 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
             'required': True,
             'schema': {
                 'type': 'object',
-                'required': ['google_drive_link', 'timestamps'],
+                'required': ['google_drive_link'],
                 'properties': {
                     'google_drive_link': {
                         'type': 'string',
@@ -1729,7 +1729,7 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -1737,6 +1737,11 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                             'maxItems': 2
                         },
                         'example': [[10, 20], [30, 45], [60, 70]]
+                    },
+                    'detailed_timestamps': {
+                        'type': 'string',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
                     }
                 }
             }
@@ -1790,12 +1795,23 @@ def process_google_drive():
         
         google_drive_link = data.get('google_drive_link')
         timestamps = data.get('timestamps')
+        detailed_timestamps = data.get('detailed_timestamps')
         
         if not google_drive_link:
             error_response = jsonify({"error": "No Google Drive link provided"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
+        # Handle the detailed timestamp format if provided
+        if detailed_timestamps and isinstance(detailed_timestamps, str):
+            try:
+                timestamps = parse_detailed_timestamps(detailed_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid detailed timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if detailed_timestamps was not provided or failed to parse
         if not timestamps or not isinstance(timestamps, list):
             error_response = jsonify({"error": "Invalid or missing timestamps"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
@@ -1853,7 +1869,7 @@ def process_google_drive():
             'required': True,
             'schema': {
                 'type': 'object',
-                'required': ['youtube_url', 'timestamps'],
+                'required': ['youtube_url'],
                 'properties': {
                     'youtube_url': {
                         'type': 'string',
@@ -1862,7 +1878,7 @@ def process_google_drive():
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -1870,6 +1886,11 @@ def process_google_drive():
                             'maxItems': 2
                         },
                         'example': [[10, 20], [30, 45], [60, 70]]
+                    },
+                    'detailed_timestamps': {
+                        'type': 'string',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
                     }
                 }
             }
@@ -1923,12 +1944,23 @@ def process_youtube():
         
         youtube_url = data.get('youtube_url')
         timestamps = data.get('timestamps')
+        detailed_timestamps = data.get('detailed_timestamps')
         
         if not youtube_url:
             error_response = jsonify({"error": "No YouTube URL provided"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
+        # Handle the detailed timestamp format if provided
+        if detailed_timestamps and isinstance(detailed_timestamps, str):
+            try:
+                timestamps = parse_detailed_timestamps(detailed_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid detailed timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if detailed_timestamps was not provided or failed to parse
         if not timestamps or not isinstance(timestamps, list):
             error_response = jsonify({"error": "Invalid or missing timestamps"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
@@ -1986,7 +2018,7 @@ def process_youtube():
             'required': True,
             'schema': {
                 'type': 'object',
-                'required': ['youtube_url', 'timestamps'],
+                'required': ['youtube_url'],
                 'properties': {
                     'youtube_url': {
                         'type': 'string',
@@ -1995,7 +2027,7 @@ def process_youtube():
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [start, end] in seconds',
+                        'description': 'Array of timestamp pairs [start, end] in seconds. Either this or detailed_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {'type': 'number'},
@@ -2003,6 +2035,11 @@ def process_youtube():
                             'maxItems': 2
                         },
                         'example': [[10, 20], [30, 45], [60, 70]]
+                    },
+                    'detailed_timestamps': {
+                        'type': 'string',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". The API will extract the timestamps and create segments between consecutive timestamps. Either this or timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense'
                     }
                 }
             }
@@ -2056,12 +2093,23 @@ def process_youtube_proxy():
         
         youtube_url = data.get('youtube_url')
         timestamps = data.get('timestamps')
+        detailed_timestamps = data.get('detailed_timestamps')
         
         if not youtube_url:
             error_response = jsonify({"error": "No YouTube URL provided"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
+        # Handle the detailed timestamp format if provided
+        if detailed_timestamps and isinstance(detailed_timestamps, str):
+            try:
+                timestamps = parse_detailed_timestamps(detailed_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid detailed timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if detailed_timestamps was not provided or failed to parse
         if not timestamps or not isinstance(timestamps, list):
             error_response = jsonify({"error": "Invalid or missing timestamps"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
@@ -2496,6 +2544,47 @@ def download_file(filename):
         response.headers.add('Access-Control-Allow-Methods', 'GET')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
         return response, 500
+
+def parse_detailed_timestamps(timestamps_str):
+    """
+    Parse detailed timestamps in the format: "HH:MM:SS.mmm text,HH:MM:SS.mmm text"
+    and convert them to an array of [start, end] pairs in seconds.
+    
+    Args:
+        timestamps_str (str): Comma-separated string of timestamp-text pairs
+        
+    Returns:
+        list: Array of [start, end] pairs in seconds
+    """
+    logger.info(f"Parsing detailed timestamps: {timestamps_str}")
+    
+    # Extract all timestamps using regex
+    pattern = r'(\d{2}:\d{2}:\d{2}\.\d{3})'
+    matches = re.findall(pattern, timestamps_str)
+    
+    if not matches or len(matches) < 2:
+        logger.error(f"Could not extract at least two timestamps from: {timestamps_str}")
+        raise ValueError("At least two timestamps are required to create segments")
+    
+    # Convert timestamps to seconds
+    def time_to_seconds(time_str):
+        h, m, s = time_str.split(':')
+        seconds = float(h) * 3600 + float(m) * 60 + float(s)
+        return seconds
+    
+    timestamp_seconds = [time_to_seconds(t) for t in matches]
+    
+    # Create [start, end] pairs from consecutive timestamps
+    pairs = []
+    for i in range(len(timestamp_seconds) - 1):
+        start = timestamp_seconds[i]
+        end = timestamp_seconds[i + 1]
+        # Only include if there's a reasonable duration (over 0.1 seconds)
+        if end - start > 0.1:
+            pairs.append([start, end])
+    
+    logger.info(f"Converted to {len(pairs)} timestamp pairs: {pairs}")
+    return pairs
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
