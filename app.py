@@ -14,6 +14,7 @@ import yt_dlp
 import subprocess
 import random
 from datetime import datetime
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1517,7 +1518,7 @@ def process_video_job(job_id, google_drive_link, timestamps):
             
             # Generate download URL - use full URL including hostname
             # Get the server name from request context or use environment variable
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
             protocol = os.environ.get('PROTOCOL', 'http')
             download_url = f"{protocol}://{server_name}/download/{output_filename}"
             
@@ -1580,7 +1581,7 @@ def process_youtube_job(job_id, youtube_url, timestamps):
             process_video(input_file, timestamps, output_path)
             
             # Generate download URL - use full URL including hostname
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
             protocol = os.environ.get('PROTOCOL', 'http')
             download_url = f"{protocol}://{server_name}/download/{output_filename}"
             
@@ -1643,7 +1644,7 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
             process_video(input_file, timestamps, output_path)
             
             # Generate download URL - use full URL including hostname
-            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
             if request and request.host:
                 server_name = request.host
             
@@ -2003,7 +2004,7 @@ def process_youtube_proxy():
         
         # Generate status URL
         protocol = os.environ.get('PROTOCOL', 'https')
-        server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+        server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
         if request and request.host:
             server_name = request.host
             
@@ -2265,13 +2266,15 @@ def download_youtube_highest_quality(url):
     # Use our proxy method with priority on highest resolution
     success = False
     error_messages = []
+    detailed_errors = []
     result_info = {
         "success": False,
         "file_path": None,
         "file_size": 0,
         "download_url": None,
         "video_id": video_id,
-        "error": None
+        "error": None,
+        "detailed_errors": []
     }
     
     # Try Piped API first - it usually works best for highest quality
@@ -2315,7 +2318,7 @@ def download_youtube_highest_quality(url):
                             logger.info(f"Piped API highest quality download successful: {file_size} bytes")
                             
                             # Generate download URL
-                            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
                             if request and request.host:
                                 server_name = request.host
                             
@@ -2331,12 +2334,26 @@ def download_youtube_highest_quality(url):
                                 "video_id": video_id,
                                 "quality": quality,
                                 "fps": fps,
-                                "error": None
+                                "error": None,
+                                "detailed_errors": []
                             }
                             
                             return result_info
+                    else:
+                        error_detail = "No suitable video URL found in Piped API response"
+                        detailed_errors.append({"method": "Piped API", "error": error_detail})
+                        logger.warning(error_detail)
+                else:
+                    error_detail = "No video streams found in Piped API response"
+                    detailed_errors.append({"method": "Piped API", "error": error_detail})
+                    logger.warning(error_detail)
+            else:
+                error_detail = f"Piped API returned status code {response.status_code}: {response.text}"
+                detailed_errors.append({"method": "Piped API", "error": error_detail})
+                logger.warning(error_detail)
     except Exception as e:
         error_message = f"Error with Piped API highest quality: {str(e)}"
+        detailed_errors.append({"method": "Piped API", "error": str(e), "traceback": traceback.format_exc()})
         logger.warning(error_message)
         error_messages.append(error_message)
     
@@ -2392,7 +2409,7 @@ def download_youtube_highest_quality(url):
                                     logger.info(f"Invidious API highest quality download successful: {file_size} bytes")
                                     
                                     # Generate download URL
-                                    server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                                    server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
                                     if request and request.host:
                                         server_name = request.host
                                     
@@ -2408,14 +2425,29 @@ def download_youtube_highest_quality(url):
                                         "video_id": video_id,
                                         "quality": quality,
                                         "fps": fps,
-                                        "error": None
+                                        "error": None,
+                                        "detailed_errors": []
                                     }
                                     
                                     return result_info
+                            else:
+                                instance_error = "No suitable video URL found in Invidious API response"
+                                detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
+                                logger.warning(f"Invidious instance {instance}: {instance_error}")
+                        else:
+                            instance_error = "No formats found in Invidious API response"
+                            detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
+                            logger.warning(f"Invidious instance {instance}: {instance_error}")
+                    else:
+                        instance_error = f"Invidious API returned status code {response.status_code}: {response.text}"
+                        detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
+                        logger.warning(f"Invidious instance {instance}: {instance_error}")
                 except Exception as instance_error:
+                    detailed_errors.append({"method": f"Invidious ({instance})", "error": str(instance_error)})
                     logger.warning(f"Error with Invidious instance {instance}: {str(instance_error)}")
     except Exception as e:
         error_message = f"Error with Invidious API highest quality: {str(e)}"
+        detailed_errors.append({"method": "Invidious (all instances)", "error": str(e), "traceback": traceback.format_exc()})
         logger.warning(error_message)
         error_messages.append(error_message)
     
@@ -2471,7 +2503,7 @@ def download_youtube_highest_quality(url):
                     fps = info["fps"]
                 
                 # Generate download URL
-                server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.saastify.co')
+                server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
                 if request and request.host:
                     server_name = request.host
                 
@@ -2487,12 +2519,18 @@ def download_youtube_highest_quality(url):
                     "video_id": video_id,
                     "quality": quality,
                     "fps": fps,
-                    "error": None
+                    "error": None,
+                    "detailed_errors": []
                 }
                 
                 return result_info
+            else:
+                ytdlp_error = "yt-dlp could not download the video or output file is empty"
+                detailed_errors.append({"method": "yt-dlp", "error": ytdlp_error})
+                logger.warning(ytdlp_error)
     except Exception as e:
         error_message = f"Error with yt-dlp highest quality: {str(e)}"
+        detailed_errors.append({"method": "yt-dlp", "error": str(e), "traceback": traceback.format_exc()})
         logger.warning(error_message)
         error_messages.append(error_message)
     
@@ -2502,6 +2540,7 @@ def download_youtube_highest_quality(url):
     logger.error(f"All highest quality download methods failed. Errors:\n{error_details}")
     
     result_info["error"] = error_message
+    result_info["detailed_errors"] = detailed_errors
     return result_info
 
 
@@ -2577,6 +2616,16 @@ def download_youtube_endpoint():
         if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
             return jsonify({"error": "Invalid YouTube URL format"}), 400
             
+        # Extract video ID for use in the command suggestion
+        video_id = None
+        try:
+            if "youtube.com/watch?v=" in youtube_url:
+                video_id = youtube_url.split("youtube.com/watch?v=")[1].split("&")[0]
+            elif "youtu.be/" in youtube_url:
+                video_id = youtube_url.split("youtu.be/")[1].split("?")[0]
+        except:
+            pass
+            
         # Download the video
         logger.info(f"Received request to download YouTube video: {youtube_url}")
         result = download_youtube_highest_quality(youtube_url)
@@ -2591,16 +2640,43 @@ def download_youtube_endpoint():
                 "fps": result["fps"]
             }), 200
         else:
-            return jsonify({
+            # Create helpful error message with yt-dlp command suggestion
+            error_message = result["error"] or "Failed to download the video"
+            yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url}'"
+            
+            response = {
                 "success": False,
-                "error": result["error"] or "Failed to download the video"
-            }), 500
+                "error": error_message,
+                "youtube_url": youtube_url,
+                "alternative_solution": {
+                    "message": "YouTube is actively blocking download attempts from our server. Try using yt-dlp directly on your computer:",
+                    "command": yt_dlp_command,
+                    "installation": "If you don't have yt-dlp installed: pip install yt-dlp"
+                }
+            }
+            
+            if video_id:
+                response["video_id"] = video_id
+                
+            return jsonify(response), 503  # Service Unavailable - better status code for this case
         
     except Exception as e:
         logger.error(f"Error in download_youtube endpoint: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e), "success": False}), 500
+        
+        # Create helpful error message with yt-dlp command suggestion
+        yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url if 'youtube_url' in locals() else 'YOUR_VIDEO_URL'}'"
+        
+        return jsonify({
+            "error": str(e), 
+            "success": False,
+            "alternative_solution": {
+                "message": "YouTube is actively blocking download attempts from our server. Try using yt-dlp directly on your computer:",
+                "command": yt_dlp_command,
+                "installation": "If you don't have yt-dlp installed: pip install yt-dlp"
+            }
+        }), 500
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
