@@ -51,7 +51,7 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir yt-dlp==2023.11.16 youtube-dl==2021.12.17
+    && pip install --no-cache-dir yt-dlp==2025.02.19 youtube-dl==2021.12.17
 
 # Create directories for data and authentication
 RUN mkdir -p /app/videos \
