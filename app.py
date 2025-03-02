@@ -1735,26 +1735,36 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
     'responses': {
         '202': {
             'description': 'Job accepted for processing',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'job_id': {'type': 'string'},
-                    'status': {'type': 'string'},
-                    'message': {'type': 'string'},
-                    'status_url': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'status_url': {'type': 'string'}
+                        }
+                    }
                 }
             }
         },
         '400': {
             'description': 'Bad request parameters',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
                 }
             }
         }
-    }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
 })
 def process_google_drive():
     try:
@@ -1854,26 +1864,36 @@ def process_google_drive():
     'responses': {
         '202': {
             'description': 'Job accepted for processing',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'job_id': {'type': 'string'},
-                    'status': {'type': 'string'},
-                    'message': {'type': 'string'},
-                    'status_url': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'status_url': {'type': 'string'}
+                        }
+                    }
                 }
             }
         },
         '400': {
             'description': 'Bad request parameters',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
                 }
             }
         }
-    }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
 })
 def process_youtube():
     try:
@@ -1973,26 +1993,36 @@ def process_youtube():
     'responses': {
         '202': {
             'description': 'Job accepted for processing',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'job_id': {'type': 'string'},
-                    'status': {'type': 'string'},
-                    'message': {'type': 'string'},
-                    'status_url': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'status_url': {'type': 'string'}
+                        }
+                    }
                 }
             }
         },
         '400': {
             'description': 'Bad request parameters',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
                 }
             }
         }
-    }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
 })
 def process_youtube_proxy():
     try:
@@ -2006,720 +2036,6 @@ def process_youtube_proxy():
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
-        youtube_url = data.get('youtube_url')
-        timestamps = data.get('timestamps')
-        
-        if not youtube_url:
-            error_response = jsonify({"error": "No YouTube URL provided"})
-            error_response.headers.add('Access-Control-Allow-Origin', '*')
-            return error_response, 400
-        
-        if not timestamps or not isinstance(timestamps, list):
-            error_response = jsonify({"error": "Invalid or missing timestamps"})
-            error_response.headers.add('Access-Control-Allow-Origin', '*')
-            return error_response, 400
-        
-        # Create a job ID
-        job_id = str(uuid.uuid4())
-        
-        # Initialize job status
-        jobs[job_id] = {
-            "status": "queued",
-            "message": "Job queued for processing",
-            "created_at": time.time()
-        }
-        
-        # Start background thread to process video
-        thread = threading.Thread(
-            target=process_youtube_proxy_job,
-            args=(job_id, youtube_url, timestamps)
-        )
-        thread.daemon = True
-        thread.start()
-        
-        # Return job ID and status URL
-        status_url = url_for('job_status', job_id=job_id, _external=True)
-        response = jsonify({
-            "job_id": job_id,
-            "status": "queued",
-            "message": "Job queued for processing",
-            "status_url": status_url
-        })
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 202
-    
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        return error_response, 500
-
-@app.route('/job/<job_id>', methods=['GET'])
-@swag_from({
-    'tags': ['Job Status'],
-    'summary': 'Get job status',
-    'description': 'Returns the status of a video processing job',
-    'parameters': [
-        {
-            'name': 'job_id',
-            'in': 'path',
-            'required': True,
-            'type': 'string',
-            'description': 'ID of the job'
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Job status',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'job_id': {'type': 'string'},
-                    'status': {'type': 'string', 'enum': ['queued', 'processing', 'completed', 'failed']},
-                    'message': {'type': 'string'},
-                    'download_url': {'type': 'string'}
-                }
-            }
-        },
-        '404': {
-            'description': 'Job not found',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
-                }
-            }
-        }
-    }
-})
-def job_status(job_id):
-    """Endpoint to check the status of a job."""
-    if job_id not in jobs:
-        error_response = jsonify({"error": "Job not found"})
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        return error_response, 404
-    
-    job = jobs[job_id].copy()
-    job["job_id"] = job_id
-    
-    # Clean up old jobs that are complete or failed and older than 1 hour
-    current_time = time.time()
-    for jid in list(jobs.keys()):
-        j = jobs[jid]
-        if j["status"] in ["completed", "failed"] and current_time - j.get("created_at", 0) > 3600:
-            jobs.pop(jid, None)
-    
-    response = jsonify(job)
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
-
-@app.route('/download/<filename>', methods=['GET'])
-@swag_from({
-    'tags': ['Video Download'],
-    'summary': 'Download processed video',
-    'description': 'Downloads a processed video file by filename',
-    'parameters': [
-        {
-            'name': 'filename',
-            'in': 'path',
-            'required': True,
-            'type': 'string',
-            'description': 'Name of the processed video file'
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Video file'
-        },
-        '404': {
-            'description': 'File not found',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
-                }
-            }
-        }
-    }
-})
-def download(filename):
-    """Endpoint to download a processed video file."""
-    try:
-        # Get the file response
-        response = send_from_directory(VIDEO_DIR, filename, as_attachment=True)
-        
-        # Add CORS headers to allow cross-origin downloads
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        # Allow content-disposition header to be exposed to browser
-        response.headers.add('Access-Control-Expose-Headers', 'Content-Disposition')
-        
-        return response
-    except Exception as e:
-        logger.error(f"Error serving file: {str(e)}")
-        error_response = jsonify({"error": f"Error serving file: {str(e)}"})
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        return error_response, 404
-
-@app.route('/download_url/<job_id>', methods=['GET'])
-@swag_from({
-    'tags': ['Video Download'],
-    'summary': 'Get just the download URL for a processed video',
-    'description': 'Returns only the direct download URL for a completed job',
-    'parameters': [
-        {
-            'name': 'job_id',
-            'in': 'path',
-            'required': True,
-            'type': 'string',
-            'description': 'ID of the job'
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Download URL',
-            'schema': {
-                'type': 'string'
-            }
-        },
-        '202': {
-            'description': 'Job is still processing',
-            'schema': {
-                'type': 'string'
-            }
-        },
-        '404': {
-            'description': 'Job not found',
-            'schema': {
-                'type': 'string'
-            }
-        },
-        '500': {
-            'description': 'Job failed',
-            'schema': {
-                'type': 'string'
-            }
-        }
-    }
-})
-def download_url(job_id):
-    """Endpoint to get just the download URL for a completed job."""
-    if job_id not in jobs:
-        error_response = "Job not found"
-        # Add CORS headers
-        response = app.response_class(error_response, mimetype='text/plain')
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 404
-    
-    job = jobs[job_id]
-    
-    if job["status"] == "completed" and "download_url" in job:
-        # Return just the URL as plain text for easy integration
-        url_response = job["download_url"]
-        response = app.response_class(url_response, mimetype='text/plain')
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response
-    elif job["status"] == "failed":
-        error_message = f"Job failed: {job.get('message', 'Unknown error')}"
-        response = app.response_class(error_message, mimetype='text/plain')
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 500
-    else:
-        # Job is still processing
-        status_message = f"Job is {job['status']}, please check back later"
-        response = app.response_class(status_message, mimetype='text/plain')
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 202
-
-@app.route('/health', methods=['GET'])
-@swag_from({
-    'tags': ['System'],
-    'summary': 'Check API health',
-    'description': 'Returns the health status of the API.',
-    'responses': {
-        '200': {
-            'description': 'API health information',
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'status': {'type': 'string'},
-                    'message': {'type': 'string'},
-                    'timestamp': {'type': 'string'},
-                    'version': {'type': 'string'},
-                    'server_info': {'type': 'object'}
-                }
-            }
-        }
-    }
-})
-def health_check():
-    """Check the health of the API."""
-    # Get server information for diagnostics
-    server_name = os.environ.get('SERVER_NAME', 'Not set')
-    server_info = {
-        'request_host': request.host if request else 'No request',
-        'request_url': request.url if request else 'No request',
-        'request_scheme': request.scheme if request else 'No request',
-        'request_headers': dict(request.headers) if request else 'No request',
-        'server_name_env': server_name,
-        'protocol_env': os.environ.get('PROTOCOL', 'Not set'),
-        'host_url': request.host_url if request else 'No request'
-    }
-    
-    return jsonify({
-        'status': 'healthy',
-        'message': 'API is running correctly',
-        'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0',
-        'server_info': server_info
-    }), 200
-
-@app.route('/', methods=['GET'])
-def index():
-    """Root endpoint, redirects to API documentation."""
-    response = jsonify({
-        "name": "Video Chopper API",
-        "version": "1.0.0",
-        "documentation": "/docs",
-        "endpoints": [
-            {"path": "/process_google_drive", "method": "POST", "description": "Process video from Google Drive"},
-            {"path": "/process_youtube", "method": "POST", "description": "Process video from YouTube"},
-            {"path": "/process_youtube_proxy", "method": "POST", "description": "Process video from YouTube using proxy services"},
-            {"path": "/job/<job_id>", "method": "GET", "description": "Check job status"},
-            {"path": "/download/<filename>", "method": "GET", "description": "Download processed video"},
-            {"path": "/download_url/<job_id>", "method": "GET", "description": "Get just the download URL for a processed video"},
-            {"path": "/health", "method": "GET", "description": "Health check"},
-            {"path": "/docs", "method": "GET", "description": "API documentation"}
-        ]
-    })
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
-
-# Add a simple route that redirects to /docs
-@app.route('/swagger', methods=['GET'])
-def swagger_ui():
-    response = redirect('/docs', code=302)
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
-
-# Add this new function after the existing download functions
-
-def download_youtube_highest_quality(url):
-    """
-    Download a YouTube video in the highest possible resolution.
-    
-    Args:
-        url (str): The URL of the YouTube video.
-        
-    Returns:
-        dict: Information about the downloaded file including path and download URL.
-    """
-    logger.info(f"Starting high quality download from YouTube URL: {url}")
-    
-    # Create videos directory if it doesn't exist
-    videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'videos')
-    os.makedirs(videos_dir, exist_ok=True)
-    
-    # Extract video ID for file naming
-    video_id = None
-    try:
-        if "youtube.com/watch?v=" in url:
-            video_id = url.split("youtube.com/watch?v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        
-        logger.info(f"Extracted video ID: {video_id}")
-    except Exception as e:
-        logger.warning(f"Error extracting video ID: {str(e)}")
-        video_id = f"youtube_{int(time.time())}"
-    
-    # Generate a unique filename
-    timestamp = int(time.time())
-    filename = f"{video_id}_{timestamp}.mp4"
-    destination = os.path.join(videos_dir, filename)
-    
-    logger.info(f"Will download to: {destination}")
-    
-    # Use our proxy method with priority on highest resolution
-    success = False
-    error_messages = []
-    detailed_errors = []
-    result_info = {
-        "success": False,
-        "file_path": None,
-        "file_size": 0,
-        "download_url": None,
-        "video_id": video_id,
-        "error": None,
-        "detailed_errors": []
-    }
-    
-    # Try Piped API first - it usually works best for highest quality
-    try:
-        if video_id:
-            # Piped API approach
-            api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
-            logger.info(f"Requesting stream info from Piped API for highest quality: {api_url}")
-            
-            response = requests.get(api_url, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Look for video streams - don't limit to 720p for this endpoint
-                if "videoStreams" in data and data["videoStreams"]:
-                    # Sort by quality (height)
-                    video_streams = sorted(
-                        data["videoStreams"], 
-                        key=lambda x: int(x.get("height", 0) * x.get("fps", 30)), 
-                        reverse=True
-                    )
-                    
-                    # Take the highest quality stream
-                    if video_streams and "url" in video_streams[0]:
-                        selected_stream = video_streams[0]
-                        video_url = selected_stream["url"]
-                        quality = f"{selected_stream.get('height', 'unknown')}p"
-                        fps = selected_stream.get('fps', 'unknown')
-                        
-                        logger.info(f"Found highest quality video URL via Piped API: {quality} {fps}fps")
-                        
-                        # Download video
-                        with requests.get(video_url, stream=True) as r:
-                            r.raise_for_status()
-                            with open(destination, 'wb') as f:
-                                for chunk in r.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-                        
-                        if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                            file_size = os.path.getsize(destination)
-                            logger.info(f"Piped API highest quality download successful: {file_size} bytes")
-                            
-                            # Use the utility function to generate a download URL that works with both HTTP and HTTPS
-                            download_url = generate_download_url(filename)
-                            
-                            result_info = {
-                                "success": True,
-                                "file_path": destination,
-                                "file_name": filename,
-                                "file_size": file_size,
-                                "download_url": download_url,
-                                "video_id": video_id,
-                                "quality": quality,
-                                "fps": fps,
-                                "error": None,
-                                "detailed_errors": []
-                            }
-                            
-                            return result_info
-                    else:
-                        error_detail = "No suitable video URL found in Piped API response"
-                        detailed_errors.append({"method": "Piped API", "error": error_detail})
-                        logger.warning(error_detail)
-                else:
-                    error_detail = "No video streams found in Piped API response"
-                    detailed_errors.append({"method": "Piped API", "error": error_detail})
-                    logger.warning(error_detail)
-            else:
-                error_detail = f"Piped API returned status code {response.status_code}: {response.text}"
-                detailed_errors.append({"method": "Piped API", "error": error_detail})
-                logger.warning(error_detail)
-    except Exception as e:
-        error_message = f"Error with Piped API highest quality: {str(e)}"
-        detailed_errors.append({"method": "Piped API", "error": str(e), "traceback": traceback.format_exc()})
-        logger.warning(error_message)
-        error_messages.append(error_message)
-    
-    # If Piped fails, try Invidious
-    try:
-        if video_id:
-            # Invidious approach - try multiple instances
-            invidious_instances = [
-                "https://invidious.snopyta.org",
-                "https://yewtu.be",
-                "https://invidious.kavin.rocks",
-                "https://inv.riverside.rocks"
-            ]
-            
-            for instance in invidious_instances:
-                try:
-                    api_url = f"{instance}/api/v1/videos/{video_id}"
-                    logger.info(f"Requesting video info from Invidious API for highest quality: {api_url}")
-                    
-                    response = requests.get(api_url, timeout=30)
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        # Check for formats
-                        formats = []
-                        if "adaptiveFormats" in data:
-                            formats.extend(data["adaptiveFormats"])
-                        if "formatStreams" in data:
-                            formats.extend(data["formatStreams"])
-                        
-                        if formats:
-                            # Get video formats and sort by quality
-                            video_formats = [f for f in formats if "video" in f.get("type", "")]
-                            video_formats.sort(key=lambda x: int(x.get("height", 0) * x.get("fps", 30)), reverse=True)
-                            
-                            if video_formats and "url" in video_formats[0]:
-                                selected_format = video_formats[0]
-                                video_url = selected_format["url"]
-                                quality = f"{selected_format.get('height', 'unknown')}p"
-                                fps = selected_format.get('fps', 'unknown')
-                                
-                                logger.info(f"Found highest quality URL via Invidious: {quality} {fps}fps")
-                                
-                                # Download video
-                                with requests.get(video_url, stream=True) as r:
-                                    r.raise_for_status()
-                                    with open(destination, 'wb') as f:
-                                        for chunk in r.iter_content(chunk_size=8192):
-                                            f.write(chunk)
-                                
-                                if os.path.exists(destination) and os.path.getsize(destination) > 0:
-                                    file_size = os.path.getsize(destination)
-                                    logger.info(f"Invidious API highest quality download successful: {file_size} bytes")
-                                    
-                                    # Use the utility function to generate a download URL that works with both HTTP and HTTPS
-                                    download_url = generate_download_url(filename)
-                                    
-                                    result_info = {
-                                        "success": True,
-                                        "file_path": destination,
-                                        "file_name": filename,
-                                        "file_size": file_size,
-                                        "download_url": download_url,
-                                        "video_id": video_id,
-                                        "quality": quality,
-                                        "fps": fps,
-                                        "error": None,
-                                        "detailed_errors": []
-                                    }
-                                    
-                                    return result_info
-                            else:
-                                instance_error = "No suitable video URL found in Invidious API response"
-                                detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
-                                logger.warning(f"Invidious instance {instance}: {instance_error}")
-                        else:
-                            instance_error = "No formats found in Invidious API response"
-                            detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
-                            logger.warning(f"Invidious instance {instance}: {instance_error}")
-                    else:
-                        instance_error = f"Invidious API returned status code {response.status_code}: {response.text}"
-                        detailed_errors.append({"method": f"Invidious ({instance})", "error": instance_error})
-                        logger.warning(f"Invidious instance {instance}: {instance_error}")
-                except Exception as instance_error:
-                    detailed_errors.append({"method": f"Invidious ({instance})", "error": str(instance_error)})
-                    logger.warning(f"Error with Invidious instance {instance}: {str(instance_error)}")
-    except Exception as e:
-        error_message = f"Error with Invidious API highest quality: {str(e)}"
-        detailed_errors.append({"method": "Invidious (all instances)", "error": str(e), "traceback": traceback.format_exc()})
-        logger.warning(error_message)
-        error_messages.append(error_message)
-    
-    # As a last resort, use yt-dlp
-    try:
-        logger.info("Trying yt-dlp for highest quality download")
-        
-        # Find cookie files
-        cookie_files = [
-            '/app/cookies.txt',
-            '/app/youtube_cookies.txt',
-            '/app/auth/cookies.txt',
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt'),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'auth', 'cookies.txt'),
-        ]
-        
-        cookie_file = None
-        for f in cookie_files:
-            if os.path.exists(f):
-                cookie_file = f
-                logger.info(f"Found cookie file: {f}")
-                break
-        
-        ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Highest quality
-            'outtmpl': destination,
-            'cookiefile': cookie_file,
-            'verbose': True,
-            'no_warnings': False,
-            'noplaylist': True,
-            'retries': 10,
-            'fragment_retries': 10,
-            'skip_unavailable_fragments': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/'
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info("Downloading with yt-dlp in highest quality...")
-            info = ydl.extract_info(url, download=True)
-            
-            if info and os.path.exists(destination) and os.path.getsize(destination) > 0:
-                file_size = os.path.getsize(destination)
-                logger.info(f"yt-dlp highest quality download successful: {file_size} bytes")
-                
-                # Get quality info
-                quality = "unknown"
-                fps = "unknown"
-                if "height" in info:
-                    quality = f"{info['height']}p"
-                if "fps" in info:
-                    fps = info["fps"]
-                
-                # Use the utility function to generate a download URL that works with both HTTP and HTTPS
-                download_url = generate_download_url(filename)
-                
-                result_info = {
-                    "success": True,
-                    "file_path": destination,
-                    "file_name": filename,
-                    "file_size": file_size,
-                    "download_url": download_url,
-                    "video_id": video_id,
-                    "quality": quality,
-                    "fps": fps,
-                    "error": None,
-                    "detailed_errors": []
-                }
-                
-                return result_info
-            else:
-                ytdlp_error = "yt-dlp could not download the video or output file is empty"
-                detailed_errors.append({"method": "yt-dlp", "error": ytdlp_error})
-                logger.warning(ytdlp_error)
-    except Exception as e:
-        error_message = f"Error with yt-dlp highest quality: {str(e)}"
-        detailed_errors.append({"method": "yt-dlp", "error": str(e), "traceback": traceback.format_exc()})
-        logger.warning(error_message)
-        error_messages.append(error_message)
-    
-    # If we reach here, all methods have failed
-    error_details = "\n".join(error_messages)
-    error_message = f"Failed to download YouTube video in highest quality. Try a different video or try again later."
-    logger.error(f"All highest quality download methods failed. Errors:\n{error_details}")
-    
-    result_info["error"] = error_message
-    result_info["detailed_errors"] = detailed_errors
-    return result_info
-
-
-# Add this new endpoint function
-@app.route('/download_youtube', methods=['POST'])
-@swag_from({
-    'tags': ['Video Download'],
-    'summary': 'Download YouTube video in highest resolution',
-    'description': 'Downloads a YouTube video in the highest available resolution and returns a direct download link without any processing.',
-    'parameters': [
-        {
-            'name': 'body',
-            'in': 'body',
-            'required': True,
-            'schema': {
-                'type': 'object',
-                'required': ['youtube_url'],
-                'properties': {
-                    'youtube_url': {
-                        'type': 'string',
-                        'description': 'YouTube video URL',
-                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-                    }
-                }
-            }
-        }
-    ],
-    'responses': {
-        '200': {
-            'description': 'Video download information',
-            'content': {
-                'application/json': {
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'success': {'type': 'boolean'},
-                            'download_url': {'type': 'string'},
-                            'file_size': {'type': 'integer'},
-                            'video_id': {'type': 'string'},
-                            'quality': {'type': 'string'},
-                            'fps': {'type': 'string'},
-                            'error': {'type': 'string'}
-                        }
-                    }
-                }
-            }
-        },
-        '400': {
-            'description': 'Bad request parameters',
-            'content': {
-                'application/json': {
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'error': {'type': 'string'}
-                        }
-                    }
-                }
-            }
-        },
-        '503': {
-            'description': 'Service unavailable - YouTube blocking download attempts',
-            'content': {
-                'application/json': {
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'success': {'type': 'boolean'},
-                            'error': {'type': 'string'},
-                            'youtube_url': {'type': 'string'},
-                            'alternative_solution': {
-                                'type': 'object',
-                                'properties': {
-                                    'message': {'type': 'string'},
-                                    'command': {'type': 'string'},
-                                    'installation': {'type': 'string'}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        '500': {
-            'description': 'Server error',
-            'content': {
-                'application/json': {
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'error': {'type': 'string'},
-                            'success': {'type': 'boolean'},
-                            'alternative_solution': {
-                                'type': 'object',
-                                'properties': {
-                                    'message': {'type': 'string'},
-                                    'command': {'type': 'string'},
-                                    'installation': {'type': 'string'}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    'schemes': ['https'],  # Force HTTPS in Swagger documentation
-    'produces': ['application/json']  # Specify the response content type
-})
-def download_youtube_endpoint():
-    """Download a YouTube video in highest quality without processing."""
-    try:
-        # Log the request details for debugging
-        logger.info(f"Received request to /download_youtube with headers: {dict(request.headers)}")
-        
-        data = request.get_json()
-        if not data:
             logger.warning("No JSON data provided in request")
             response = jsonify({"error": "No JSON data provided"})
             response.headers.add('Access-Control-Allow-Origin', '*')
@@ -2859,6 +2175,184 @@ def generate_download_url(filename):
     logger.info(f"Generated download URL: {download_url}")
     
     return download_url
+
+@app.route('/job/<job_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Job Status'],
+    'summary': 'Get job status',
+    'description': 'Returns the status of a video processing job',
+    'parameters': [
+        {
+            'name': 'job_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'ID of the job'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Job status',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string', 'enum': ['queued', 'processing', 'completed', 'failed']},
+                            'message': {'type': 'string'},
+                            'download_url': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '404': {
+            'description': 'Job not found',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
+})
+def job_status(job_id):
+    if job_id in jobs:
+        return jsonify({
+            "job_id": job_id,
+            "status": jobs[job_id]["status"],
+            "message": jobs[job_id]["message"],
+            "download_url": jobs[job_id]["download_url"]
+        })
+    else:
+        return jsonify({"error": "Job not found"}), 404
+
+@app.route('/download_url/<job_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Video Download'],
+    'summary': 'Get just the download URL for a processed video',
+    'description': 'Returns only the direct download URL for a completed job',
+    'parameters': [
+        {
+            'name': 'job_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'ID of the job'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Download URL information',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'download_url': {'type': 'string'},
+                            'success': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        },
+        '202': {
+            'description': 'Job is still processing',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'success': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        },
+        '404': {
+            'description': 'Job not found',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'},
+                            'success': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        },
+        '500': {
+            'description': 'Job failed',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'},
+                            'success': {'type': 'boolean'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
+})
+def download_url(job_id):
+    """Endpoint to get just the download URL for a completed job."""
+    if job_id not in jobs:
+        error_response = jsonify({
+            "error": "Job not found",
+            "success": False
+        })
+        # Add CORS headers
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        error_response.headers.add('Content-Type', 'application/json')
+        return error_response, 404
+    
+    job = jobs[job_id]
+    
+    if job["status"] == "completed" and "download_url" in job:
+        # Return the URL in a JSON response
+        url_response = jsonify({
+            "download_url": job["download_url"],
+            "success": True
+        })
+        url_response.headers.add('Access-Control-Allow-Origin', '*')
+        url_response.headers.add('Content-Type', 'application/json')
+        return url_response
+    elif job["status"] == "failed":
+        error_message = job.get('message', 'Unknown error')
+        error_response = jsonify({
+            "error": f"Job failed: {error_message}",
+            "success": False
+        })
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        error_response.headers.add('Content-Type', 'application/json')
+        return error_response, 500
+    else:
+        # Job is still processing
+        status_response = jsonify({
+            "status": job['status'],
+            "message": f"Job is {job['status']}, please check back later",
+            "success": False
+        })
+        status_response.headers.add('Access-Control-Allow-Origin', '*')
+        status_response.headers.add('Content-Type', 'application/json')
+        return status_response, 202
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
