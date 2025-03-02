@@ -16,6 +16,7 @@ import subprocess
 import random
 from datetime import datetime
 import traceback
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1769,7 +1770,8 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                   '1. Array format: There are two options for array format:\n'
                   '   a. Using seconds: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
                   '   b. Using time strings: [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"]] - Each pair represents [in_point, out_point] in HH:MM:SS.mmm format\n'
-                  '2. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  '2. Simple format: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799" - Pairs of in/out points separated by semicolons\n'
+                  '3. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
                   'The API will create a video that includes only the specified segments and concatenate them together.',
     'parameters': [
         {
@@ -1778,16 +1780,16 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
             'required': True,
             'schema': {
                 'type': 'object',
-                'required': ['youtube_url'],
+                'required': ['google_drive_link'],
                 'properties': {
-                    'youtube_url': {
+                    'google_drive_link': {
                         'type': 'string',
-                        'description': 'YouTube video URL',
-                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                        'description': 'Shareable link to a Google Drive video. The link should be in one of these formats: https://drive.google.com/file/d/YOUR_FILE_ID/view or https://drive.google.com/open?id=YOUR_FILE_ID',
+                        'example': 'https://drive.google.com/file/d/1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ/view'
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds or as "HH:MM:SS.mmm" strings. Each pair defines a segment to extract from the video. Either this or detailed_timestamps must be provided.',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds or as "HH:MM:SS.mmm" strings. Each pair defines a segment to extract from the video. Either this or detailed_timestamps or simple_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {
@@ -1799,9 +1801,14 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
                         },
                         'example': [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"], ["00:00:10.000", "00:00:15.500"]]
                     },
+                    'simple_timestamps': {
+                        'type': 'string',
+                        'description': 'Simple timestamps in the format "in,out;in,out;in,out" where each pair of in/out points is separated by semicolons. For example: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799". Either this or timestamps or detailed_timestamps must be provided.',
+                        'example': '00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799;00:00:10.000,00:00:15.500'
+                    },
                     'detailed_timestamps': {
                         'type': 'string',
-                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps must be provided.',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps or simple_timestamps must be provided.',
                         'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
                     }
                 }
@@ -1842,10 +1849,10 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
     'schemes': ['https'],  # Force HTTPS in Swagger documentation
     'produces': ['application/json']  # Specify the response content type
 })
-def process_youtube():
+def process_google_drive():
     try:
         # Log the request details for debugging
-        logger.info(f"Received request to /process_youtube with headers: {dict(request.headers)}")
+        logger.info(f"Received request to /process_google_drive with headers: {dict(request.headers)}")
         
         data = request.get_json()
         
@@ -1854,12 +1861,13 @@ def process_youtube():
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
-        youtube_url = data.get('youtube_url')
+        google_drive_link = data.get('google_drive_link')
         timestamps = data.get('timestamps')
         detailed_timestamps = data.get('detailed_timestamps')
+        simple_timestamps = data.get('simple_timestamps')
         
-        if not youtube_url:
-            error_response = jsonify({"error": "No YouTube URL provided"})
+        if not google_drive_link:
+            error_response = jsonify({"error": "No Google Drive link provided"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
@@ -1872,7 +1880,16 @@ def process_youtube():
                 error_response.headers.add('Access-Control-Allow-Origin', '*')
                 return error_response, 400
         
-        # Check for standard timestamps format if detailed_timestamps was not provided or failed to parse
+        # Handle the simple timestamp format if provided
+        if simple_timestamps and isinstance(simple_timestamps, str):
+            try:
+                timestamps = parse_simple_timestamps(simple_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid simple timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if other formats were not provided or failed to parse
         if not timestamps or not isinstance(timestamps, list):
             error_response = jsonify({"error": "Invalid or missing timestamps"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
@@ -1890,8 +1907,8 @@ def process_youtube():
         
         # Start background thread to process video
         thread = threading.Thread(
-            target=process_youtube_job,
-            args=(job_id, youtube_url, timestamps)
+            target=process_video_job,
+            args=(job_id, google_drive_link, timestamps)
         )
         thread.daemon = True
         thread.start()
@@ -1927,7 +1944,8 @@ def process_youtube():
                   '1. Array format: There are two options for array format:\n'
                   '   a. Using seconds: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
                   '   b. Using time strings: [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"]] - Each pair represents [in_point, out_point] in HH:MM:SS.mmm format\n'
-                  '2. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  '2. Simple format: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799" - Pairs of in/out points separated by semicolons\n'
+                  '3. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
                   'The API will create a video that includes only the specified segments and concatenate them together.',
     'parameters': [
         {
@@ -1945,7 +1963,7 @@ def process_youtube():
                     },
                     'timestamps': {
                         'type': 'array',
-                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds or as "HH:MM:SS.mmm" strings. Each pair defines a segment to extract from the video. Either this or detailed_timestamps must be provided.',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds or as "HH:MM:SS.mmm" strings. Each pair defines a segment to extract from the video. Either this or detailed_timestamps or simple_timestamps must be provided.',
                         'items': {
                             'type': 'array',
                             'items': {
@@ -1957,9 +1975,14 @@ def process_youtube():
                         },
                         'example': [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"], ["00:00:10.000", "00:00:15.500"]]
                     },
+                    'simple_timestamps': {
+                        'type': 'string',
+                        'description': 'Simple timestamps in the format "in,out;in,out;in,out" where each pair of in/out points is separated by semicolons. For example: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799". Either this or timestamps or detailed_timestamps must be provided.',
+                        'example': '00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799;00:00:10.000,00:00:15.500'
+                    },
                     'detailed_timestamps': {
                         'type': 'string',
-                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps must be provided.',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps or simple_timestamps must be provided.',
                         'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
                     }
                 }
@@ -2015,6 +2038,7 @@ def process_youtube_proxy():
         youtube_url = data.get('youtube_url')
         timestamps = data.get('timestamps')
         detailed_timestamps = data.get('detailed_timestamps')
+        simple_timestamps = data.get('simple_timestamps')
         
         if not youtube_url:
             error_response = jsonify({"error": "No YouTube URL provided"})
@@ -2030,12 +2054,21 @@ def process_youtube_proxy():
                 error_response.headers.add('Access-Control-Allow-Origin', '*')
                 return error_response, 400
         
-        # Check for standard timestamps format if detailed_timestamps was not provided or failed to parse
+        # Handle the simple timestamp format if provided
+        if simple_timestamps and isinstance(simple_timestamps, str):
+            try:
+                timestamps = parse_simple_timestamps(simple_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid simple timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if other formats were not provided or failed to parse
         if not timestamps or not isinstance(timestamps, list):
             error_response = jsonify({"error": "Invalid or missing timestamps"})
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
-                
+        
         # Create a job ID
         job_id = str(uuid.uuid4())
         
@@ -2532,6 +2565,214 @@ def parse_detailed_timestamps(timestamps_str):
     
     logger.info(f"Converted to {len(pairs)} timestamp pairs: {pairs}")
     return pairs
+
+def parse_simple_timestamps(simple_timestamps_str):
+    """
+    Parse timestamps in the format "in,out;in,out;in,out" where each in/out pair is separated by semicolons.
+    
+    Args:
+        simple_timestamps_str: String in the format "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799"
+        
+    Returns:
+        list: List of timestamp pairs [[in_point, out_point], ...]
+    """
+    if not simple_timestamps_str or not isinstance(simple_timestamps_str, str):
+        raise ValueError("Invalid simple timestamps format")
+    
+    result = []
+    pairs = simple_timestamps_str.split(';')
+    
+    for pair in pairs:
+        if not pair.strip():
+            continue
+        
+        points = pair.split(',')
+        if len(points) != 2:
+            raise ValueError(f"Invalid timestamp pair: {pair}. Expected format is 'in_point,out_point'")
+        
+        in_point = points[0].strip()
+        out_point = points[1].strip()
+        
+        result.append([in_point, out_point])
+    
+    if not result:
+        raise ValueError("No valid timestamp pairs found")
+        
+    return result
+
+@app.route('/process_youtube', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Process video from YouTube',
+    'description': 'Downloads a video from YouTube at maximum resolution, cuts segments based on timestamps, and concatenates them. The processing happens asynchronously and returns a job ID that can be used to check status.\n\n'
+                  'TIMESTAMP FORMATS:\n'
+                  '1. Array format: There are two options for array format:\n'
+                  '   a. Using seconds: [[0, 10], [20, 30]] - Each pair represents [in_point, out_point] in seconds\n'
+                  '   b. Using time strings: [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"]] - Each pair represents [in_point, out_point] in HH:MM:SS.mmm format\n'
+                  '2. Simple format: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799" - Pairs of in/out points separated by semicolons\n'
+                  '3. Detailed format: "00:00:00.120 text,00:00:10.500 text" - Each timestamp is an in-point, with the next timestamp being the out-point\n\n'
+                  'The API will create a video that includes only the specified segments and concatenate them together.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['youtube_url'],
+                'properties': {
+                    'youtube_url': {
+                        'type': 'string',
+                        'description': 'YouTube video URL',
+                        'example': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                    },
+                    'timestamps': {
+                        'type': 'array',
+                        'description': 'Array of timestamp pairs [in_point, out_point] in seconds or as "HH:MM:SS.mmm" strings. Each pair defines a segment to extract from the video. Either this or detailed_timestamps or simple_timestamps must be provided.',
+                        'items': {
+                            'type': 'array',
+                            'items': {
+                                'type': ['number', 'string'],
+                                'description': 'Can be a number in seconds or a string in "HH:MM:SS.mmm" format'
+                            },
+                            'minItems': 2,
+                            'maxItems': 2
+                        },
+                        'example': [["00:00:00.120", "00:00:01.839"], ["00:00:03.879", "00:00:05.799"], ["00:00:10.000", "00:00:15.500"]]
+                    },
+                    'simple_timestamps': {
+                        'type': 'string',
+                        'description': 'Simple timestamps in the format "in,out;in,out;in,out" where each pair of in/out points is separated by semicolons. For example: "00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799". Either this or timestamps or detailed_timestamps must be provided.',
+                        'example': '00:00:00.120,00:00:01.839;00:00:03.879,00:00:05.799;00:00:10.000,00:00:15.500'
+                    },
+                    'detailed_timestamps': {
+                        'type': 'string',
+                        'description': 'Detailed timestamps in the format "HH:MM:SS.mmm text,HH:MM:SS.mmm text". Each timestamp acts as an in-point for a segment, with the next timestamp being the out-point. The API will extract the timestamps and create segments between consecutive pairs. Either this or timestamps or simple_timestamps must be provided.',
+                        'example': '00:00:00.120 imagine building a tech startup while,00:00:01.839 the bombs are falling around you imagine,00:00:03.879 competing with billion dooll defense,00:00:05.799 companies from a basement in ke now'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '202': {
+            'description': 'Job accepted for processing',
+            'content': {
+                'application/json': {
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'job_id': {'type': 'string'},
+                    'status': {'type': 'string'},
+                    'message': {'type': 'string'},
+                    'status_url': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'content': {
+                'application/json': {
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+        }
+    },
+    'schemes': ['https'],  # Force HTTPS in Swagger documentation
+    'produces': ['application/json']  # Specify the response content type
+})
+def process_youtube():
+    try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_youtube with headers: {dict(request.headers)}")
+        
+        data = request.get_json()
+        
+        if not data:
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        youtube_url = data.get('youtube_url')
+        timestamps = data.get('timestamps')
+        detailed_timestamps = data.get('detailed_timestamps')
+        simple_timestamps = data.get('simple_timestamps')
+        
+        if not youtube_url:
+            error_response = jsonify({"error": "No YouTube URL provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        # Handle the detailed timestamp format if provided
+        if detailed_timestamps and isinstance(detailed_timestamps, str):
+            try:
+                timestamps = parse_detailed_timestamps(detailed_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid detailed timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Handle the simple timestamp format if provided
+        if simple_timestamps and isinstance(simple_timestamps, str):
+            try:
+                timestamps = parse_simple_timestamps(simple_timestamps)
+            except ValueError as e:
+                error_response = jsonify({"error": f"Invalid simple timestamps: {str(e)}"})
+                error_response.headers.add('Access-Control-Allow-Origin', '*')
+                return error_response, 400
+        
+        # Check for standard timestamps format if other formats were not provided or failed to parse
+        if not timestamps or not isinstance(timestamps, list):
+            error_response = jsonify({"error": "Invalid or missing timestamps"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        # Create a job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
+        
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_youtube_job,
+            args=(job_id, youtube_url, timestamps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL - Force HTTPS for external URLs
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        # Ensure URL uses HTTPS regardless of request scheme
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+            
+        response = jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
