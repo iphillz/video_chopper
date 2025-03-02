@@ -6,4 +6,7 @@ Werkzeug==2.0.3
 gunicorn==21.2.0
 flasgger==0.9.5
 pytube==15.0.0
-youtube-dl==2021.12.17 # Optional fallback 
+youtube-dl==2021.12.17 # Optional fallback
+selenium
+undetected-chromedriver
+webdriver_manager 
