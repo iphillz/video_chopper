@@ -46,8 +46,27 @@ except ImportError:
     logger.warning("Undetected Chromedriver is not available, stealth browser downloads will be skipped")
 
 app = Flask(__name__)
-# Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Enable CORS for all routes with specific configurations
+CORS(app, resources={r"/*": {
+    "origins": "*",
+    "methods": ["GET", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Accept", "Authorization", "X-Requested-With"],
+    "expose_headers": ["Content-Length", "Content-Disposition"],
+    "supports_credentials": False,
+    "max_age": 86400  # 24 hours
+}})
+
+# Add an OPTIONS method handler for all routes to support preflight requests
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    response = jsonify({"status": "ok"})
+    # Add CORS headers for preflight requests
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization, X-Requested-With')
+    response.headers.add('Access-Control-Max-Age', '86400')
+    return response
 
 # Configure Swagger
 swagger_config = {
@@ -2121,10 +2140,20 @@ def job_status(job_id):
 def download(filename):
     """Endpoint to download a processed video file."""
     try:
-        return send_from_directory(VIDEO_DIR, filename, as_attachment=True)
+        # Get the file response
+        response = send_from_directory(VIDEO_DIR, filename, as_attachment=True)
+        
+        # Add CORS headers to allow cross-origin downloads
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        # Allow content-disposition header to be exposed to browser
+        response.headers.add('Access-Control-Expose-Headers', 'Content-Disposition')
+        
+        return response
     except Exception as e:
         logger.error(f"Error serving file: {str(e)}")
-        return jsonify({"error": f"Error serving file: {str(e)}"}), 404
+        error_response = jsonify({"error": f"Error serving file: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 404
 
 @app.route('/download_url/<job_id>', methods=['GET'])
 @swag_from({
@@ -2197,7 +2226,8 @@ def download_url(job_id):
                     'status': {'type': 'string'},
                     'message': {'type': 'string'},
                     'timestamp': {'type': 'string'},
-                    'version': {'type': 'string'}
+                    'version': {'type': 'string'},
+                    'server_info': {'type': 'object'}
                 }
             }
         }
@@ -2205,11 +2235,24 @@ def download_url(job_id):
 })
 def health_check():
     """Check the health of the API."""
+    # Get server information for diagnostics
+    server_name = os.environ.get('SERVER_NAME', 'Not set')
+    server_info = {
+        'request_host': request.host if request else 'No request',
+        'request_url': request.url if request else 'No request',
+        'request_scheme': request.scheme if request else 'No request',
+        'request_headers': dict(request.headers) if request else 'No request',
+        'server_name_env': server_name,
+        'protocol_env': os.environ.get('PROTOCOL', 'Not set'),
+        'host_url': request.host_url if request else 'No request'
+    }
+    
     return jsonify({
         'status': 'healthy',
         'message': 'API is running correctly',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'server_info': server_info
     }), 200
 
 @app.route('/', methods=['GET'])
@@ -2328,13 +2371,8 @@ def download_youtube_highest_quality(url):
                             file_size = os.path.getsize(destination)
                             logger.info(f"Piped API highest quality download successful: {file_size} bytes")
                             
-                            # Generate download URL
-                            server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-                            if request and request.host:
-                                server_name = request.host
-                            
-                            protocol = os.environ.get('PROTOCOL', 'https')
-                            download_url = f"{protocol}://{server_name}/download/{filename}"
+                            # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+                            download_url = generate_download_url(filename)
                             
                             result_info = {
                                 "success": True,
@@ -2419,13 +2457,8 @@ def download_youtube_highest_quality(url):
                                     file_size = os.path.getsize(destination)
                                     logger.info(f"Invidious API highest quality download successful: {file_size} bytes")
                                     
-                                    # Generate download URL
-                                    server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-                                    if request and request.host:
-                                        server_name = request.host
-                                    
-                                    protocol = os.environ.get('PROTOCOL', 'https')
-                                    download_url = f"{protocol}://{server_name}/download/{filename}"
+                                    # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+                                    download_url = generate_download_url(filename)
                                     
                                     result_info = {
                                         "success": True,
@@ -2505,7 +2538,7 @@ def download_youtube_highest_quality(url):
                 file_size = os.path.getsize(destination)
                 logger.info(f"yt-dlp highest quality download successful: {file_size} bytes")
                 
-                # Try to get quality info
+                # Get quality info
                 quality = "unknown"
                 fps = "unknown"
                 if "height" in info:
@@ -2513,13 +2546,8 @@ def download_youtube_highest_quality(url):
                 if "fps" in info:
                     fps = info["fps"]
                 
-                # Generate download URL
-                server_name = os.environ.get('SERVER_NAME', 'video_chopper_cooify.ytboost.top')
-                if request and request.host:
-                    server_name = request.host
-                
-                protocol = os.environ.get('PROTOCOL', 'https')
-                download_url = f"{protocol}://{server_name}/download/{filename}"
+                # Use the utility function to generate a download URL that works with both HTTP and HTTPS
+                download_url = generate_download_url(filename)
                 
                 result_info = {
                     "success": True,
@@ -2609,23 +2637,34 @@ def download_youtube_highest_quality(url):
 def download_youtube_endpoint():
     """Download a YouTube video in highest quality without processing."""
     try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /download_youtube with headers: {dict(request.headers)}")
+        
         data = request.get_json()
         if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
+            logger.warning("No JSON data provided in request")
+            response = jsonify({"error": "No JSON data provided"})
+            return response, 400
             
         # Validate required parameters
         if "youtube_url" not in data:
-            return jsonify({"error": "Missing required parameter: youtube_url"}), 400
+            logger.warning("Missing required parameter: youtube_url")
+            response = jsonify({"error": "Missing required parameter: youtube_url"})
+            return response, 400
             
         youtube_url = data["youtube_url"]
         
         # Validate URL
         if not youtube_url or not isinstance(youtube_url, str):
-            return jsonify({"error": "Invalid YouTube URL"}), 400
+            logger.warning(f"Invalid YouTube URL: {youtube_url}")
+            response = jsonify({"error": "Invalid YouTube URL"})
+            return response, 400
             
         # Basic validation of YouTube URL format
         if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
-            return jsonify({"error": "Invalid YouTube URL format"}), 400
+            logger.warning(f"Invalid YouTube URL format: {youtube_url}")
+            response = jsonify({"error": "Invalid YouTube URL format"})
+            return response, 400
             
         # Extract video ID for use in the command suggestion
         video_id = None
@@ -2638,24 +2677,29 @@ def download_youtube_endpoint():
             pass
             
         # Download the video
-        logger.info(f"Received request to download YouTube video: {youtube_url}")
+        logger.info(f"Processing download request for YouTube video: {youtube_url}")
         result = download_youtube_highest_quality(youtube_url)
         
         if result["success"]:
-            return jsonify({
+            logger.info(f"Successfully downloaded video: {youtube_url}, returning download URL: {result['download_url']}")
+            response = jsonify({
                 "success": True,
                 "download_url": result["download_url"],
                 "file_size": result["file_size"],
                 "video_id": result["video_id"],
                 "quality": result["quality"],
                 "fps": result["fps"]
-            }), 200
+            })
+            # Add CORS headers explicitly to ensure they are included in the response
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 200
         else:
             # Create helpful error message with yt-dlp command suggestion
             error_message = result["error"] or "Failed to download the video"
+            logger.warning(f"Failed to download video: {youtube_url}, error: {error_message}")
             yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url}'"
             
-            response = {
+            response_data = {
                 "success": False,
                 "error": error_message,
                 "youtube_url": youtube_url,
@@ -2667,19 +2711,21 @@ def download_youtube_endpoint():
             }
             
             if video_id:
-                response["video_id"] = video_id
-                
-            return jsonify(response), 503  # Service Unavailable - better status code for this case
+                response_data["video_id"] = video_id
+            
+            response = jsonify(response_data)
+            # Add CORS headers explicitly to ensure they are included in the response
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 503  # Service Unavailable - better status code for this case
         
     except Exception as e:
         logger.error(f"Error in download_youtube endpoint: {str(e)}")
-        import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Create helpful error message with yt-dlp command suggestion
         yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url if 'youtube_url' in locals() else 'YOUR_VIDEO_URL'}'"
         
-        return jsonify({
+        response = jsonify({
             "error": str(e), 
             "success": False,
             "alternative_solution": {
@@ -2687,7 +2733,43 @@ def download_youtube_endpoint():
                 "command": yt_dlp_command,
                 "installation": "If you don't have yt-dlp installed: pip install yt-dlp"
             }
-        }), 500
+        })
+        # Add CORS headers explicitly to ensure they are included in the response
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+def generate_download_url(filename):
+    """
+    Generate a download URL that works with both HTTP and HTTPS.
+    
+    Args:
+        filename (str): The filename to download
+        
+    Returns:
+        str: The complete download URL
+    """
+    # Determine the host from request or environment variables
+    if request and request.host:
+        server_name = request.host
+    else:
+        server_name = os.environ.get('SERVER_NAME', 'chop.ytboost.top')  # Default to the domain you're using
+    
+    # Try to get the scheme from the request
+    if request and request.scheme:
+        protocol = request.scheme
+    else:
+        # If X-Forwarded-Proto header is present, use that
+        if request and request.headers.get('X-Forwarded-Proto'):
+            protocol = request.headers.get('X-Forwarded-Proto')
+        else:
+            # Otherwise, use the PROTOCOL environment variable or default to https
+            protocol = os.environ.get('PROTOCOL', 'https')
+    
+    # Generate the full URL
+    download_url = f"{protocol}://{server_name}/download/{filename}"
+    logger.info(f"Generated download URL: {download_url}")
+    
+    return download_url
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
