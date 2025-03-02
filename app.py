@@ -1809,8 +1809,12 @@ def process_google_drive():
         thread.daemon = True
         thread.start()
         
-        # Return job ID and status URL
+        # Return job ID and status URL - Force HTTPS for external URLs
         status_url = url_for('job_status', job_id=job_id, _external=True)
+        # Ensure URL uses HTTPS regardless of request scheme
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+            
         response = jsonify({
             "job_id": job_id,
             "status": "queued",
@@ -1938,8 +1942,12 @@ def process_youtube():
         thread.daemon = True
         thread.start()
         
-        # Return job ID and status URL
+        # Return job ID and status URL - Force HTTPS for external URLs
         status_url = url_for('job_status', job_id=job_id, _external=True)
+        # Ensure URL uses HTTPS regardless of request scheme
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+            
         response = jsonify({
             "job_id": job_id,
             "status": "queued",
@@ -2036,112 +2044,58 @@ def process_youtube_proxy():
             error_response.headers.add('Access-Control-Allow-Origin', '*')
             return error_response, 400
         
-            logger.warning("No JSON data provided in request")
-            response = jsonify({"error": "No JSON data provided"})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 400
-            
-        # Validate required parameters
-        if "youtube_url" not in data:
-            logger.warning("Missing required parameter: youtube_url")
-            response = jsonify({"error": "Missing required parameter: youtube_url"})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 400
-            
-        youtube_url = data["youtube_url"]
+        youtube_url = data.get('youtube_url')
+        timestamps = data.get('timestamps')
         
-        # Validate URL
-        if not youtube_url or not isinstance(youtube_url, str):
-            logger.warning(f"Invalid YouTube URL: {youtube_url}")
-            response = jsonify({"error": "Invalid YouTube URL"})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 400
-            
-        # Basic validation of YouTube URL format
-        if "youtube.com/watch" not in youtube_url and "youtu.be/" not in youtube_url:
-            logger.warning(f"Invalid YouTube URL format: {youtube_url}")
-            response = jsonify({"error": "Invalid YouTube URL format"})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 400
-            
-        # Extract video ID for use in the command suggestion
-        video_id = None
-        try:
-            if "youtube.com/watch?v=" in youtube_url:
-                video_id = youtube_url.split("youtube.com/watch?v=")[1].split("&")[0]
-            elif "youtu.be/" in youtube_url:
-                video_id = youtube_url.split("youtu.be/")[1].split("?")[0]
-        except:
-            pass
-            
-        # Download the video
-        logger.info(f"Processing download request for YouTube video: {youtube_url}")
-        result = download_youtube_highest_quality(youtube_url)
+        if not youtube_url:
+            error_response = jsonify({"error": "No YouTube URL provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
-        if result["success"]:
-            logger.info(f"Successfully downloaded video: {youtube_url}, returning download URL: {result['download_url']}")
-            response = jsonify({
-                "success": True,
-                "download_url": result["download_url"],
-                "file_size": result["file_size"],
-                "video_id": result["video_id"],
-                "quality": result["quality"],
-                "fps": result["fps"]
-            })
-            # Add CORS headers explicitly to ensure they are included in the response
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 200
-        else:
-            # Create helpful error message with yt-dlp command suggestion
-            error_message = result["error"] or "Failed to download the video"
-            logger.warning(f"Failed to download video: {youtube_url}, error: {error_message}")
-            yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url}'"
-            
-            response_data = {
-                "success": False,
-                "error": error_message,
-                "youtube_url": youtube_url,
-                "alternative_solution": {
-                    "message": "YouTube is actively blocking download attempts from our server. Try using yt-dlp directly on your computer:",
-                    "command": yt_dlp_command,
-                    "installation": "If you don't have yt-dlp installed: pip install yt-dlp"
-                }
-            }
-            
-            if video_id:
-                response_data["video_id"] = video_id
-            
-            response = jsonify(response_data)
-            # Add CORS headers explicitly to ensure they are included in the response
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Content-Type', 'application/json')
-            return response, 503  # Service Unavailable - better status code for this case
+        if not timestamps or not isinstance(timestamps, list):
+            error_response = jsonify({"error": "Invalid or missing timestamps"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
         
-    except Exception as e:
-        logger.error(f"Error in download_youtube endpoint: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Create a job ID
+        job_id = str(uuid.uuid4())
         
-        # Create helpful error message with yt-dlp command suggestion
-        yt_dlp_command = f"yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '{youtube_url if 'youtube_url' in locals() else 'YOUR_VIDEO_URL'}'"
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
         
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_youtube_proxy_job,
+            args=(job_id, youtube_url, timestamps)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL - Force HTTPS for external URLs
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        # Ensure URL uses HTTPS regardless of request scheme
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+            
         response = jsonify({
-            "error": str(e), 
-            "success": False,
-            "alternative_solution": {
-                "message": "YouTube is actively blocking download attempts from our server. Try using yt-dlp directly on your computer:",
-                "command": yt_dlp_command,
-                "installation": "If you don't have yt-dlp installed: pip install yt-dlp"
-            }
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
         })
-        # Add CORS headers explicitly to ensure they are included in the response
         response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Content-Type', 'application/json')
-        return response, 500
+        return response, 202
+    
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 def generate_download_url(filename):
     """
@@ -2151,7 +2105,7 @@ def generate_download_url(filename):
         filename (str): The filename to download
         
     Returns:
-        str: The complete download URL
+        str: The complete download URL with HTTPS
     """
     # Determine the host from request or environment variables
     if request and request.host:
@@ -2159,16 +2113,8 @@ def generate_download_url(filename):
     else:
         server_name = os.environ.get('SERVER_NAME', 'chop.ytboost.top')  # Default to the domain you're using
     
-    # Try to get the scheme from the request
-    if request and request.scheme:
-        protocol = request.scheme
-    else:
-        # If X-Forwarded-Proto header is present, use that
-        if request and request.headers.get('X-Forwarded-Proto'):
-            protocol = request.headers.get('X-Forwarded-Proto')
-        else:
-            # Otherwise, use the PROTOCOL environment variable or default to https
-            protocol = os.environ.get('PROTOCOL', 'https')
+    # Always use HTTPS for security
+    protocol = 'https'
     
     # Generate the full URL
     download_url = f"{protocol}://{server_name}/download/{filename}"
@@ -2225,15 +2171,44 @@ def generate_download_url(filename):
     'produces': ['application/json']  # Specify the response content type
 })
 def job_status(job_id):
+    # Clean up old jobs
+    current_time = time.time()
+    # Remove jobs older than one hour that are completed or failed
+    jobs_to_remove = [j_id for j_id, job_data in jobs.items() 
+                     if job_data.get('created_at', 0) < current_time - 3600 and 
+                     job_data.get('status') in ['completed', 'failed']]
+    
+    for j_id in jobs_to_remove:
+        try:
+            del jobs[j_id]
+        except KeyError:
+            pass
+
     if job_id in jobs:
-        return jsonify({
+        job_data = jobs[job_id]
+        response_data = {
             "job_id": job_id,
-            "status": jobs[job_id]["status"],
-            "message": jobs[job_id]["message"],
-            "download_url": jobs[job_id]["download_url"]
-        })
+            "status": job_data["status"],
+            "message": job_data["message"]
+        }
+        
+        # Add download URL if job is completed
+        if job_data["status"] == "completed" and "download_url" in job_data:
+            download_url = job_data["download_url"]
+            # Ensure URL uses HTTPS
+            if download_url.startswith('http:'):
+                download_url = download_url.replace('http:', 'https:', 1)
+            response_data["download_url"] = download_url
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Content-Type', 'application/json')
+        return response
     else:
-        return jsonify({"error": "Job not found"}), 404
+        error_response = jsonify({"error": "Job not found"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        error_response.headers.add('Content-Type', 'application/json')
+        return error_response, 404
 
 @app.route('/download_url/<job_id>', methods=['GET'])
 @swag_from({
