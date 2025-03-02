@@ -1542,8 +1542,8 @@ def process_video_job(job_id, google_drive_link, timestamps):
             
             jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
             
-            # Generate unique output filename
-            output_filename = f"{uuid.uuid4()}.mp4"
+            # Use job_id as the output filename instead of generating a new UUID
+            output_filename = f"{job_id}.mp4"
             output_path = os.path.join(VIDEO_DIR, output_filename)
             
             # Process video
@@ -1603,8 +1603,8 @@ def process_youtube_job(job_id, youtube_url, timestamps):
             
             jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
             
-            # Generate unique output filename
-            output_filename = f"{uuid.uuid4()}.mp4"
+            # Use job_id as the output filename instead of generating a new UUID
+            output_filename = f"{job_id}.mp4"
             output_path = os.path.join(VIDEO_DIR, output_filename)
             
             # Process video
@@ -1664,8 +1664,8 @@ def process_youtube_proxy_job(job_id, youtube_url, timestamps):
             
             jobs[job_id]["message"] = f"Download complete. File size: {os.path.getsize(input_file) / (1024*1024):.2f} MB"
             
-            # Generate unique output filename
-            output_filename = f"{uuid.uuid4()}.mp4"
+            # Use job_id as the output filename instead of generating a new UUID
+            output_filename = f"{job_id}.mp4"
             output_path = os.path.join(VIDEO_DIR, output_filename)
             
             # Process video
