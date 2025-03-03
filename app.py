@@ -23,6 +23,7 @@ from PIL import Image
 import numpy as np
 from PIL import ImageFilter
 import json
+import os.path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,40 @@ os.makedirs(VIDEO_DIR, exist_ok=True)
 # In a production application, this should be replaced with a persistent store
 # like Redis or a database
 jobs = {}
+
+# Add after other global variables
+JOBS_FILE = os.path.join(os.path.dirname(__file__), 'jobs.json')
+
+def save_jobs():
+    """Save jobs to persistent storage."""
+    try:
+        with open(JOBS_FILE, 'w') as f:
+            # Convert any non-serializable objects to strings
+            jobs_to_save = {}
+            for job_id, job_data in jobs.items():
+                jobs_to_save[job_id] = {
+                    'status': job_data.get('status', ''),
+                    'message': job_data.get('message', ''),
+                    'created_at': job_data.get('created_at', 0),
+                    'download_url': job_data.get('download_url', ''),
+                }
+            json.dump(jobs_to_save, f)
+    except Exception as e:
+        logger.error(f"Error saving jobs: {str(e)}")
+
+def load_jobs():
+    """Load jobs from persistent storage."""
+    global jobs
+    try:
+        if os.path.exists(JOBS_FILE):
+            with open(JOBS_FILE, 'r') as f:
+                jobs = json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading jobs: {str(e)}")
+        jobs = {}
+
+# Load jobs at startup
+load_jobs()
 
 def extract_file_id(google_drive_link):
     """Extract the file ID from a Google Drive link."""
@@ -2189,44 +2224,29 @@ def generate_download_url(filename):
     'produces': ['application/json']  # Specify the response content type
 })
 def job_status(job_id):
-    # Clean up old jobs
-    current_time = time.time()
-    # Remove jobs older than one hour that are completed or failed
-    jobs_to_remove = [j_id for j_id, job_data in jobs.items() 
-                     if job_data.get('created_at', 0) < current_time - 3600 and 
-                     job_data.get('status') in ['completed', 'failed']]
+    # Load latest jobs
+    load_jobs()
     
-    for j_id in jobs_to_remove:
-        try:
-            del jobs[j_id]
-        except KeyError:
-            pass
-
-    if job_id in jobs:
-        job_data = jobs[job_id]
-        response_data = {
-            "job_id": job_id,
-            "status": job_data["status"],
-            "message": job_data["message"]
-        }
-        
-        # Add download URL if job is completed
-        if job_data["status"] == "completed" and "download_url" in job_data:
-            download_url = job_data["download_url"]
-            # Ensure URL uses HTTPS
-            if download_url.startswith('http:'):
-                download_url = download_url.replace('http:', 'https:', 1)
-            response_data["download_url"] = download_url
-        
-        response = jsonify(response_data)
+    # Clean up old jobs (older than 24 hours)
+    cleanup_old_files()
+    
+    if job_id not in jobs:
+        response = jsonify({
+            "error": "Job not found",
+            "success": False
+        })
         response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Content-Type', 'application/json')
-        return response
-    else:
-        error_response = jsonify({"error": "Job not found"})
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        error_response.headers.add('Content-Type', 'application/json')
-        return error_response, 404
+        return response, 404
+    
+    job = jobs[job_id]
+    response = jsonify({
+        "job_id": job_id,
+        "status": job.get("status", "unknown"),
+        "message": job.get("message", ""),
+        "download_url": job.get("download_url", "")
+    })
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 @app.route('/download_url/<job_id>', methods=['GET'])
 @swag_from({
