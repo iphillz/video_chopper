@@ -2929,7 +2929,7 @@ def process_vertical_video(input_path, output_path):
         filter_complex = [
             f"[1:v]scale={main_width}:{main_height}[main]",
             f"[main]pad={target_width}:{target_height}:{x_pos}:{y_pos}[padded]",
-            "[0:v][padded]overlay=format=yuv420p[v]"
+            "[0:v][padded]overlay[v]"
         ]
         
         ffmpeg_cmd = [
@@ -2940,6 +2940,7 @@ def process_vertical_video(input_path, output_path):
             '-map', '[v]',
             '-map', '1:a?',
             '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',  # Set pixel format here instead
             '-preset', 'veryfast',
             '-tune', 'fastdecode',
             '-crf', '23',
