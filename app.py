@@ -132,76 +132,64 @@ jobs = {}
 JOBS_FILE = os.path.join(os.path.dirname(__file__), 'jobs.json')
 
 def save_jobs():
-    """Save jobs to persistent storage."""
+    """Save jobs to persistent storage with proper locking."""
     try:
-        # Ensure the directory exists
         os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
         
-        # Clean up old jobs (older than 24 hours)
-        current_time = time.time()
-        jobs_to_save = {}
-        for job_id, job_data in jobs.items():
-            # Skip jobs older than 24 hours
-            if current_time - job_data.get('created_at', current_time) > 86400:
-                continue
-                
-            # Convert any non-serializable objects to strings
-            jobs_to_save[job_id] = {
-                'status': job_data.get('status', ''),
-                'message': job_data.get('message', ''),
-                'created_at': job_data.get('created_at', current_time),
-                'download_url': job_data.get('download_url', ''),
-                'output_file': job_data.get('output_file', ''),
-                'last_accessed': job_data.get('last_accessed', current_time)
-            }
-        
-        # Write to a temporary file first
+        # Use a temporary file for atomic write
         temp_file = f"{JOBS_FILE}.tmp"
         with open(temp_file, 'w') as f:
-            json.dump(jobs_to_save, f, indent=2)
-        
-        # Atomically replace the old file
+            json.dump(jobs, f, indent=2)
         os.replace(temp_file, JOBS_FILE)
-        logger.info(f"Successfully saved {len(jobs_to_save)} jobs to {JOBS_FILE}")
+        logging.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
+        return True
     except Exception as e:
-        logger.error(f"Error saving jobs: {str(e)}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Error saving jobs: {str(e)}")
+        return False
 
 def load_jobs():
-    """Load jobs from persistent storage."""
-    global jobs
+    """Load jobs from persistent storage with proper initialization."""
     try:
-        if os.path.exists(JOBS_FILE):
-            with open(JOBS_FILE, 'r') as f:
-                loaded_jobs = json.load(f)
-                # Validate and clean loaded jobs
-                current_time = time.time()
-                for job_id, job_data in loaded_jobs.items():
-                    if not isinstance(job_data, dict):
-                        logger.warning(f"Invalid job data for {job_id}, skipping")
-                        continue
-                    if 'status' not in job_data:
-                        logger.warning(f"Job {job_id} missing status, skipping")
-                        continue
-                    # Skip old jobs
-                    if current_time - job_data.get('created_at', current_time) > 86400:
-                        continue
-                    jobs[job_id] = job_data
-                logger.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
+        if not os.path.exists(JOBS_FILE):
+            logging.info(f"Jobs file {JOBS_FILE} does not exist, initializing empty jobs")
+            global jobs
+            jobs = {}
+            save_jobs()
+            return jobs
+            
+        with open(JOBS_FILE, 'r') as f:
+            loaded_jobs = json.load(f)
+            
+        if not isinstance(loaded_jobs, dict):
+            logging.error(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
+            loaded_jobs = {}
+            
+        # Update global jobs
+        global jobs
+        jobs = loaded_jobs
+        
+        logging.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
+        return jobs
     except Exception as e:
-        logger.error(f"Error loading jobs: {str(e)}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Error loading jobs: {str(e)}")
+        # Initialize empty jobs on error
+        global jobs
         jobs = {}
+        return jobs
 
 def get_job_status(job_id):
+    """Get job status with proper error handling."""
     try:
-        jobs = load_jobs()
+        if not jobs:
+            load_jobs()
+            
         if job_id not in jobs:
             return None
+            
         job = jobs[job_id]
         
         # Don't update last_accessed for completed jobs
-        if job['status'] != 'completed':
+        if job.get('status') != 'completed':
             job['last_accessed'] = time.time()
             save_jobs()
             
@@ -211,38 +199,44 @@ def get_job_status(job_id):
         return None
 
 def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
+    """Update job status with proper error handling."""
     try:
-        jobs = load_jobs()
+        if not jobs:
+            load_jobs()
+            
         if job_id not in jobs:
-            logging.error(f"Job {job_id} not found when updating status")
-            return False
+            # Initialize new job
+            jobs[job_id] = {
+                'created_at': time.time(),
+                'last_accessed': time.time(),
+                'status': status,
+                'message': message or '',
+                'download_url': download_url or '',
+                'output_file': output_file or ''
+            }
+        else:
+            # Update existing job
+            job = jobs[job_id]
+            job['status'] = status
+            job['last_accessed'] = time.time()
             
-        job = jobs[job_id]
-        job['status'] = status
-        job['last_accessed'] = time.time()
-        
-        if message is not None:
-            job['message'] = message
-        if download_url is not None:
-            job['download_url'] = download_url
-        if output_file is not None:
-            job['output_file'] = output_file
-            
-        # Only save if the status changed to completed or if it's not completed
-        if status == 'completed' or job.get('status') != 'completed':
-            save_jobs()
-            
+            if message is not None:
+                job['message'] = message
+            if download_url is not None:
+                job['download_url'] = download_url
+            if output_file is not None:
+                job['output_file'] = output_file
+                
+        # Save immediately
+        save_jobs()
         return True
     except Exception as e:
         logging.error(f"Error updating job status: {str(e)}")
         return False
 
 # Initialize jobs at startup
-if not os.path.exists(JOBS_FILE):
-    jobs = {}
-    save_jobs()
-else:
-    load_jobs()
+jobs = {}
+load_jobs()
 
 def extract_file_id(google_drive_link):
     """Extract the file ID from a Google Drive link."""
