@@ -137,15 +137,22 @@ def save_jobs():
         # Ensure the directory exists
         os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
         
-        # Convert any non-serializable objects to strings
+        # Clean up old jobs (older than 24 hours)
+        current_time = time.time()
         jobs_to_save = {}
         for job_id, job_data in jobs.items():
+            # Skip jobs older than 24 hours
+            if current_time - job_data.get('created_at', current_time) > 86400:
+                continue
+                
+            # Convert any non-serializable objects to strings
             jobs_to_save[job_id] = {
                 'status': job_data.get('status', ''),
                 'message': job_data.get('message', ''),
-                'created_at': job_data.get('created_at', time.time()),
+                'created_at': job_data.get('created_at', current_time),
                 'download_url': job_data.get('download_url', ''),
                 'output_file': job_data.get('output_file', ''),
+                'last_accessed': job_data.get('last_accessed', current_time)
             }
         
         # Write to a temporary file first
@@ -155,7 +162,7 @@ def save_jobs():
         
         # Atomically replace the old file
         os.replace(temp_file, JOBS_FILE)
-        logger.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
+        logger.info(f"Successfully saved {len(jobs_to_save)} jobs to {JOBS_FILE}")
     except Exception as e:
         logger.error(f"Error saving jobs: {str(e)}")
         logger.error(traceback.format_exc())
@@ -168,6 +175,7 @@ def load_jobs():
             with open(JOBS_FILE, 'r') as f:
                 loaded_jobs = json.load(f)
                 # Validate and clean loaded jobs
+                current_time = time.time()
                 for job_id, job_data in loaded_jobs.items():
                     if not isinstance(job_data, dict):
                         logger.warning(f"Invalid job data for {job_id}, skipping")
@@ -175,12 +183,60 @@ def load_jobs():
                     if 'status' not in job_data:
                         logger.warning(f"Job {job_id} missing status, skipping")
                         continue
+                    # Skip old jobs
+                    if current_time - job_data.get('created_at', current_time) > 86400:
+                        continue
                     jobs[job_id] = job_data
                 logger.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
     except Exception as e:
         logger.error(f"Error loading jobs: {str(e)}")
         logger.error(traceback.format_exc())
         jobs = {}
+
+def get_job_status(job_id):
+    """Get job status with proper error handling and job cleanup."""
+    try:
+        # Load latest jobs
+        load_jobs()
+        
+        if job_id not in jobs:
+            return None
+            
+        # Update last accessed time
+        jobs[job_id]['last_accessed'] = time.time()
+        save_jobs()
+        
+        return jobs[job_id]
+    except Exception as e:
+        logger.error(f"Error getting job status: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None
+
+def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
+    """Update job status with proper error handling."""
+    try:
+        # Load latest jobs first
+        load_jobs()
+        
+        if job_id not in jobs:
+            jobs[job_id] = {
+                'created_at': time.time(),
+                'last_accessed': time.time()
+            }
+            
+        jobs[job_id].update({
+            'status': status,
+            'message': message if message is not None else jobs[job_id].get('message', ''),
+            'download_url': download_url if download_url is not None else jobs[job_id].get('download_url', ''),
+            'output_file': output_file if output_file is not None else jobs[job_id].get('output_file', ''),
+            'last_accessed': time.time()
+        })
+        
+        # Save immediately
+        save_jobs()
+    except Exception as e:
+        logger.error(f"Error updating job status: {str(e)}")
+        logger.error(traceback.format_exc())
 
 # Initialize jobs at startup
 if not os.path.exists(JOBS_FILE):
@@ -2221,13 +2277,13 @@ def generate_download_url(filename):
             'description': 'Job status',
             'content': {
                 'application/json': {
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'job_id': {'type': 'string'},
-                    'status': {'type': 'string', 'enum': ['queued', 'processing', 'completed', 'failed']},
-                    'message': {'type': 'string'},
-                    'download_url': {'type': 'string'}
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string', 'enum': ['queued', 'processing', 'completed', 'failed']},
+                            'message': {'type': 'string'},
+                            'download_url': {'type': 'string'}
                         }
                     }
                 }
@@ -2237,43 +2293,32 @@ def generate_download_url(filename):
             'description': 'Job not found',
             'content': {
                 'application/json': {
-            'schema': {
-                'type': 'object',
-                'properties': {
-                    'error': {'type': 'string'}
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
                 }
             }
         }
     }
-        }
-    },
-    'schemes': ['https'],  # Force HTTPS in Swagger documentation
-    'produces': ['application/json']  # Specify the response content type
 })
 def job_status(job_id):
-    # Load latest jobs
-    load_jobs()
+    job = get_job_status(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+        
+    response = {
+        'job_id': job_id,
+        'status': job.get('status', 'unknown'),
+        'message': job.get('message', ''),
+    }
     
-    # Clean up old jobs (older than 24 hours)
-    cleanup_old_files()
-    
-    if job_id not in jobs:
-        response = jsonify({
-            "error": "Job not found",
-            "success": False
-        })
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 404
-    
-    job = jobs[job_id]
-    response = jsonify({
-        "job_id": job_id,
-        "status": job.get("status", "unknown"),
-        "message": job.get("message", ""),
-        "download_url": job.get("download_url", "")
-    })
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
+    if job.get('download_url'):
+        response['download_url'] = job['download_url']
+        
+    return jsonify(response)
 
 @app.route('/download_url/<job_id>', methods=['GET'])
 @swag_from({
@@ -2294,7 +2339,7 @@ def job_status(job_id):
             'description': 'Download URL information',
             'content': {
                 'application/json': {
-            'schema': {
+                    'schema': {
                         'type': 'object',
                         'properties': {
                             'download_url': {'type': 'string'},
@@ -2308,7 +2353,7 @@ def job_status(job_id):
             'description': 'Job is still processing',
             'content': {
                 'application/json': {
-            'schema': {
+                    'schema': {
                         'type': 'object',
                         'properties': {
                             'status': {'type': 'string'},
@@ -2323,7 +2368,7 @@ def job_status(job_id):
             'description': 'Job not found',
             'content': {
                 'application/json': {
-            'schema': {
+                    'schema': {
                         'type': 'object',
                         'properties': {
                             'error': {'type': 'string'},
@@ -2337,7 +2382,7 @@ def job_status(job_id):
             'description': 'Job failed',
             'content': {
                 'application/json': {
-            'schema': {
+                    'schema': {
                         'type': 'object',
                         'properties': {
                             'error': {'type': 'string'},
@@ -2352,47 +2397,30 @@ def job_status(job_id):
     'produces': ['application/json']  # Specify the response content type
 })
 def download_url(job_id):
-    """Endpoint to get just the download URL for a completed job."""
-    if job_id not in jobs:
-        error_response = jsonify({
-            "error": "Job not found",
-            "success": False
-        })
-        # Add CORS headers
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        error_response.headers.add('Content-Type', 'application/json')
-        return error_response, 404
-    
-    job = jobs[job_id]
-    
-    if job["status"] == "completed" and "download_url" in job:
-        # Return the URL in a JSON response
-        url_response = jsonify({
-            "download_url": job["download_url"],
-            "success": True
-        })
-        url_response.headers.add('Access-Control-Allow-Origin', '*')
-        url_response.headers.add('Content-Type', 'application/json')
-        return url_response
-    elif job["status"] == "failed":
-        error_message = job.get('message', 'Unknown error')
-        error_response = jsonify({
-            "error": f"Job failed: {error_message}",
-            "success": False
-        })
-        error_response.headers.add('Access-Control-Allow-Origin', '*')
-        error_response.headers.add('Content-Type', 'application/json')
-        return error_response, 500
-    else:
-        # Job is still processing
-        status_response = jsonify({
-            "status": job['status'],
-            "message": f"Job is {job['status']}, please check back later",
-            "success": False
-        })
-        status_response.headers.add('Access-Control-Allow-Origin', '*')
-        status_response.headers.add('Content-Type', 'application/json')
-        return status_response, 202
+    job = get_job_status(job_id)
+    if not job:
+        return jsonify({
+            'error': 'Job not found',
+            'success': False
+        }), 404
+        
+    if job.get('status') != 'completed':
+        return jsonify({
+            'status': job.get('status', 'unknown'),
+            'message': job.get('message', ''),
+            'success': False
+        }), 202
+        
+    if not job.get('download_url'):
+        return jsonify({
+            'error': 'Download URL not available',
+            'success': False
+        }), 500
+        
+    return jsonify({
+        'download_url': job['download_url'],
+        'success': True
+    })
 
 def generate_enhanced_youtube_cookies():
     """
