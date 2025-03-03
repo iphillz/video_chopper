@@ -21,6 +21,7 @@ import sys
 import math
 from PIL import Image
 import numpy as np
+from PIL import ImageFilter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2790,6 +2791,15 @@ def resize_clip(clip, **kwargs):
     
     return clip.fl_image(resize_frame)
 
+def blur_clip(clip, radius=30):
+    """Custom blur function that uses PIL's ImageFilter."""
+    def blur_frame(frame):
+        img = Image.fromarray(frame)
+        blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
+        return np.array(blurred)
+    
+    return clip.fl_image(blur_frame)
+
 def process_vertical_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format with blurred background."""
     try:
@@ -2801,7 +2811,7 @@ def process_vertical_video(input_path, output_path):
         
         # Create background (blurred and scaled version of the video)
         background = resize_clip(video, height=video.h * 2)  # Scale up to ensure it covers
-        background = background.fx(vfx.blur, radius=30)  # Apply strong blur
+        background = blur_clip(background, radius=15)  # Apply strong blur
         background = background.set_opacity(0.5)  # Set opacity to 50%
         
         # Resize original video to fit in the center while maintaining aspect ratio
