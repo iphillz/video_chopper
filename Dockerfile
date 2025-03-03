@@ -82,8 +82,10 @@ Xvfb :99 -screen 0 1280x1024x24 -ac &\n\
 sleep 1\n\
 # Ensure directories exist with proper permissions\n\
 mkdir -p /app/videos /app/auth /app/logs /tmp/video_processing\n\
-chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing\n\
+touch /app/jobs.json\n\
+chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing /app/jobs.json\n\
 chmod -R 777 /app/videos /app/auth /app/logs /tmp/video_processing\n\
+chmod 666 /app/jobs.json\n\
 # Check if Chrome works\n\
 DISPLAY=:99 google-chrome --version\n\
 # Check Xvfb is running\n\

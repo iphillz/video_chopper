@@ -4,7 +4,7 @@ import uuid
 import logging
 import threading
 import time
-from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
+from flask import Flask, request, jsonify, send_from_directory, redirect, url_for, send_file
 from flask_cors import CORS
 import requests
 import tempfile
@@ -137,7 +137,7 @@ def save_jobs():
     global jobs
     temp_file = f"{JOBS_FILE}.tmp"
     try:
-        # Ensure the directory exists
+        # Ensure the directory exists with proper permissions
         os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
         
         # Write to temporary file first
@@ -151,11 +151,17 @@ def save_jobs():
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         
+        # Set permissions before rename
+        os.chmod(temp_file, 0o666)
+        
         # Atomic rename
         os.replace(temp_file, JOBS_FILE)
         
-        # Set permissions to allow all workers to read/write
+        # Double check permissions after rename
         os.chmod(JOBS_FILE, 0o666)
+        
+        # Ensure the chrome user can access it
+        subprocess.run(['chown', 'chrome:chrome', JOBS_FILE], check=False)
         
         logger.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
         return True
@@ -2324,7 +2330,7 @@ def generate_download_url(filename):
     }
 })
 def job_status(job_id):
-    """Get job status with improved error handling."""
+    """Get job status with proper error handling."""
     try:
         job = get_job_status(job_id)
         if not job:
