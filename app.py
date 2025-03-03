@@ -2810,12 +2810,11 @@ def blur_clip(clip, radius=30):
 
 def process_vertical_video(input_path, output_path):
     try:
-        # Load the video with audio
-        video = VideoFileClip(input_path)
-        
-        # Get video dimensions
-        width, height = video.size
-        logger.info(f"Main video dimensions: {width}x{height}")
+        # Get video dimensions using ffprobe
+        probe_cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {input_path}'
+        dimensions = subprocess.check_output(probe_cmd, shell=True).decode().strip().split(',')
+        width, height = map(int, dimensions)
+        logger.info(f"Input video dimensions: {width}x{height}")
         
         # Calculate target dimensions for 9:16 aspect ratio
         target_height = int(width * (16/9))
@@ -2825,67 +2824,78 @@ def process_vertical_video(input_path, output_path):
         target_width = (target_width // 2) * 2
         target_height = (target_height // 2) * 2
         
-        logger.info(f"Converting video to {target_width}x{target_height}")
-        
-        # Create blurred background using FFmpeg
-        blur_cmd = (
-            f'ffmpeg -i {input_path} -vf "scale={target_width}:{target_height},'
-            f'gblur=sigma=30" -c:v libx264 -preset ultrafast -y {output_path}.bg.mp4'
-        )
-        subprocess.run(blur_cmd, shell=True, check=True)
-        
-        # Load the blurred background
-        background = VideoFileClip(f"{output_path}.bg.mp4")
-        
-        # Calculate dimensions for the main video
-        main_height = int(target_height * 0.7)  # 70% of the frame height
+        # Calculate main video dimensions (70% of frame height)
+        main_height = int(target_height * 0.7)
         main_width = int(main_height * (width/height))
-        
-        # Ensure main video dimensions are even
         main_width = (main_width // 2) * 2
         main_height = (main_height // 2) * 2
-        
-        logger.info(f"Resizing main video to {main_width}x{main_height}")
-        
-        # Use our custom resize_clip function
-        main_video = resize_clip(video, width=main_width, height=main_height)
         
         # Calculate position to center the main video
         x_pos = (target_width - main_width) // 2
         y_pos = (target_height - main_height) // 2
         
-        logger.info(f"Positioning main video at ({x_pos}, {y_pos})")
+        logger.info(f"Processing video to {target_width}x{target_height} with main video at {main_width}x{main_height}")
         
-        # Composite the videos
-        final = CompositeVideoClip(
-            [
-                background.set_opacity(0.5),
-                main_video.set_position((x_pos, y_pos))
-            ],
-            size=(target_width, target_height)
+        # Create the FFmpeg filter complex command
+        filter_complex = [
+            # Split the input into two streams
+            "[0:v]split=2[main][bg]",
+            
+            # Process background: scale, blur, and set opacity
+            f"[bg]scale={target_width}:{target_height},gblur=sigma=30[blurred]",
+            "[blurred]format=yuva444p,colorchannelmixer=aa=0.5[bg_final]",
+            
+            # Process main video: scale and position
+            f"[main]scale={main_width}:{main_height}[scaled]",
+            f"[scaled]pad={target_width}:{target_height}:{x_pos}:{y_pos}[main_final]",
+            
+            # Overlay main video on background
+            "[bg_final][main_final]overlay=format=auto,format=yuv420p[v]"
+        ]
+        
+        # Get source audio bitrate
+        audio_bitrate = get_audio_bitrate(input_path) or "320k"
+        
+        # Construct the full FFmpeg command
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',
+            '-i', input_path,
+            '-filter_complex', ';'.join(filter_complex),
+            '-map', '[v]',
+            '-map', '0:a?',  # Map audio if present
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',  # Use fastest encoding preset
+            '-tune', 'fastdecode',
+            '-crf', '23',  # Balance between quality and size
+            '-threads', '16',  # Use all available CPU cores
+            '-c:a', 'aac',
+            '-b:a', audio_bitrate,
+            '-movflags', '+faststart',
+            '-pix_fmt', 'yuv420p',
+            output_path
+        ]
+        
+        # Run FFmpeg command
+        logger.info("Starting FFmpeg processing")
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
         )
         
-        # Write the final video with optimized settings
-        final.write_videofile(
-            output_path,
-            codec='libx264',
-            audio_codec='aac',
-            preset='ultrafast',
-            threads=16,
-            ffmpeg_params=[
-                '-profile:v', 'baseline',
-                '-level', '3.0',
-                '-pix_fmt', 'yuv420p'
-            ]
-        )
+        # Monitor FFmpeg progress
+        for line in process.stderr:
+            if 'frame=' in line:
+                logger.debug(line.strip())
         
-        # Clean up temporary files
-        os.remove(f"{output_path}.bg.mp4")
+        # Wait for completion
+        process.wait()
         
-        # Close video clips
-        video.close()
-        background.close()
-        final.close()
+        if process.returncode != 0:
+            raise Exception("FFmpeg processing failed")
+        
+        logger.info("Video processing completed successfully")
         
     except Exception as e:
         logger.error(f"Error in process_vertical_video: {str(e)}")
