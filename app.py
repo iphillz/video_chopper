@@ -133,13 +133,16 @@ jobs = {}
 JOBS_FILE = os.path.join(os.path.dirname(__file__), 'jobs.json')
 
 def save_jobs():
-    """Save jobs to persistent storage with proper locking."""
+    """Save jobs to persistent storage with proper locking and permissions."""
+    global jobs
+    temp_file = f"{JOBS_FILE}.tmp"
     try:
+        # Ensure the directory exists
         os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
         
-        temp_file = f"{JOBS_FILE}.tmp"
+        # Write to temporary file first
         with open(temp_file, 'w') as f:
-            # Acquire an exclusive lock for writing
+            # Acquire an exclusive lock
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 json.dump(jobs, f, indent=2)
@@ -147,11 +150,11 @@ def save_jobs():
                 os.fsync(f.fileno())
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                
+        
         # Atomic rename
         os.replace(temp_file, JOBS_FILE)
         
-        # Set permissions to ensure all workers can read/write
+        # Set permissions to allow all workers to read/write
         os.chmod(JOBS_FILE, 0o666)
         
         logger.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
@@ -170,24 +173,34 @@ def load_jobs():
     global jobs
     try:
         if not os.path.exists(JOBS_FILE):
+            logger.info(f"Jobs file {JOBS_FILE} does not exist, initializing empty jobs")
             jobs = {}
-            save_jobs()
+            save_jobs()  # Create the file with proper permissions
             return jobs
             
         with open(JOBS_FILE, 'r') as f:
             # Acquire a shared lock for reading
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             try:
-                loaded_jobs = json.load(f)
+                file_content = f.read().strip()
+                if not file_content:  # Handle empty file case
+                    logger.warning(f"Empty jobs file {JOBS_FILE}, initializing empty jobs")
+                    jobs = {}
+                else:
+                    loaded_jobs = json.loads(file_content)
+                    if not isinstance(loaded_jobs, dict):
+                        logger.warning(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
+                        loaded_jobs = {}
+                    jobs = loaded_jobs
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             
-        if not isinstance(loaded_jobs, dict):
-            logger.warning(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
-            loaded_jobs = {}
-            
-        jobs = loaded_jobs
         logger.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
+        return jobs
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding jobs file: {str(e)}")
+        jobs = {}
+        save_jobs()  # Try to save empty jobs to fix corrupted file
         return jobs
     except Exception as e:
         logger.error(f"Error loading jobs: {str(e)}")
@@ -218,37 +231,31 @@ def get_job_status(job_id):
         return None
 
 def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
-    """Update job status with proper error handling and locking."""
+    """Update job status with proper error handling and immediate saving."""
     global jobs
     try:
-        # Force reload jobs to get latest state
-        load_jobs()
-            
         if job_id not in jobs:
-            # Initialize new job
             jobs[job_id] = {
-                'created_at': time.time(),
-                'last_accessed': time.time(),
                 'status': status,
                 'message': message or '',
-                'download_url': download_url or '',
-                'output_file': output_file or ''
+                'created_at': datetime.now().isoformat(),
+                'last_accessed': datetime.now().isoformat()
             }
         else:
-            # Update existing job
-            job = jobs[job_id]
-            job['status'] = status
-            job['last_accessed'] = time.time()
-            
+            jobs[job_id]['status'] = status
+            jobs[job_id]['last_accessed'] = datetime.now().isoformat()
             if message is not None:
-                job['message'] = message
-            if download_url is not None:
-                job['download_url'] = download_url
-            if output_file is not None:
-                job['output_file'] = output_file
+                jobs[job_id]['message'] = message
                 
-        # Save immediately with proper locking
-        save_jobs()
+        if download_url is not None:
+            jobs[job_id]['download_url'] = download_url
+        if output_file is not None:
+            jobs[job_id]['output_file'] = output_file
+            
+        # Save immediately after updating
+        if not save_jobs():
+            logger.error(f"Failed to save job status update for job {job_id}")
+            
         return True
     except Exception as e:
         logger.error(f"Error updating job status: {str(e)}")
