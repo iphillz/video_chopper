@@ -2811,11 +2811,17 @@ def process_vertical_video(input_path, output_path):
         
         # Calculate dimensions for 9:16 aspect ratio
         if video.w > video.h:  # If input is landscape (16:9)
-            target_height = video.w * 16 // 9  # New height based on original width
-            target_width = video.w  # Keep original width
+            # Make sure width is even
+            target_width = (video.w // 2) * 2
+            # Calculate height for 9:16 ratio and make it even
+            target_height = ((target_width * 16) // 9) // 2 * 2
         else:  # If input is already portrait
-            target_width = video.h * 9 // 16  # New width based on original height
-            target_height = video.h  # Keep original height
+            # Make sure height is even
+            target_height = (video.h // 2) * 2
+            # Calculate width for 9:16 ratio and make it even
+            target_width = ((target_height * 9) // 16) // 2 * 2
+            
+        logger.info(f"Converting video to {target_width}x{target_height}")
             
         # Create background (blurred and scaled version of the video)
         # Use FFmpeg for the initial scaling and blurring for better performance
@@ -2823,7 +2829,8 @@ def process_vertical_video(input_path, output_path):
         scale_cmd = [
             'ffmpeg', '-i', input_path,
             '-vf', f'scale={target_width}:{target_height},gblur=sigma=20',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
             '-an',  # No audio needed for background
             temp_scaled
         ]
@@ -2834,13 +2841,15 @@ def process_vertical_video(input_path, output_path):
         background = background.set_opacity(0.5)  # Set opacity to 50%
         
         # Calculate the size for the main video to fit in 9:16 frame
-        # while maintaining its aspect ratio
+        # while maintaining aspect ratio
         if video.w / video.h > 9/16:  # If video is wider than 9:16
             main_width = target_width
-            main_height = int(target_width * video.h / video.w)
+            main_height = int((target_width * video.h / video.w) // 2 * 2)  # Ensure even height
         else:  # If video is taller than 9:16
             main_height = target_height
-            main_width = int(target_height * video.w / video.h)
+            main_width = int((target_height * video.w / video.h) // 2 * 2)  # Ensure even width
+            
+        logger.info(f"Main video dimensions: {main_width}x{main_height}")
             
         # Resize main video
         main_video = video.resize((main_width, main_height))
