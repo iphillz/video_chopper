@@ -2960,7 +2960,7 @@ def process_vertical_video(input_path, output_path):
         blur_cmd = [
             'ffmpeg', '-y',
             '-i', scaled_file,
-            '-vf', f'scale={target_width}:{target_height},gblur=sigma=30',
+            '-vf', f'scale={target_width}:{target_height},gblur=sigma=30,format=yuv420p',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-an',
@@ -2974,9 +2974,9 @@ def process_vertical_video(input_path, output_path):
         # Final composition
         logger.info("Creating final composition...")
         filter_complex = [
-            f"[1:v]scale={main_width}:{main_height}[scaled]",
-            f"[scaled]pad={target_width}:{target_height}:{x_pos}:{y_pos}:black[padded]",
-            "[0:v][padded]overlay=format=auto[v]"
+            f"[1:v]scale={main_width}:{main_height}[main]",
+            f"[main]pad={target_width}:{target_height}:{x_pos}:{y_pos}[padded]",
+            "[0:v][padded]overlay[v]"
         ]
         
         ffmpeg_cmd = [
