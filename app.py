@@ -2811,12 +2811,12 @@ def blur_clip(clip, radius=30):
 
 def process_vertical_video(input_path, output_path):
     try:
-        # Get video dimensions using ffprobe with more reliable format
+        # Get video dimensions and metadata using ffprobe
         probe_cmd = [
             'ffprobe',
             '-v', 'error',
             '-select_streams', 'v:0',
-            '-show_entries', 'stream=width,height',
+            '-show_entries', 'stream=width,height,rotation',
             '-of', 'json',
             input_path
         ]
@@ -2838,12 +2838,17 @@ def process_vertical_video(input_path, output_path):
         stream_data = probe_data['streams'][0]
         orig_width = int(stream_data.get('width', 0))
         orig_height = int(stream_data.get('height', 0))
+        rotation = int(stream_data.get('rotation', 0))
         
         if orig_width == 0 or orig_height == 0:
             raise Exception(f"Invalid video dimensions: {orig_width}x{orig_height}")
             
-        logger.info(f"Original video dimensions: {orig_width}x{orig_height}")
+        logger.info(f"Original video dimensions: {orig_width}x{orig_height}, rotation: {rotation}")
         
+        # If video is rotated 90 or -90 degrees, swap width and height
+        if abs(rotation) == 90:
+            orig_width, orig_height = orig_height, orig_width
+            
         # Scale down to 1080p equivalent if larger
         scale_factor = min(1.0, 1920 / orig_width)
         width = int(orig_width * scale_factor)
@@ -2876,24 +2881,34 @@ def process_vertical_video(input_path, output_path):
         logger.info(f"Processing video to {target_width}x{target_height} with main video at {main_width}x{main_height}")
         
         # Create the FFmpeg filter complex command
-        filter_complex = [
-            # Scale input first if needed
-            f"[0:v]scale={width}:{height}[scaled_input]",
-            
-            # Split the scaled input into two streams
+        filter_complex = []
+        
+        # Handle rotation if needed
+        if rotation == 90:
+            filter_complex.append("[0:v]transpose=2")  # Rotate clockwise
+        elif rotation == -90:
+            filter_complex.append("[0:v]transpose=1")  # Rotate counterclockwise
+        
+        # Add initial scale and format conversion
+        if filter_complex:
+            filter_complex.append(f"[rotated]scale={width}:{height},format=yuv420p[scaled_input]")
+        else:
+            filter_complex.append(f"[0:v]scale={width}:{height},format=yuv420p[scaled_input]")
+        
+        # Split the scaled input into two streams
+        filter_complex.extend([
             "[scaled_input]split=2[main][bg]",
             
-            # Process background: scale, blur, and set opacity
+            # Process background: scale and blur
             f"[bg]scale={target_width}:{target_height},gblur=sigma=30[blurred]",
-            "[blurred]format=yuva444p,colorchannelmixer=aa=0.5[bg_final]",
             
             # Process main video: scale and position
             f"[main]scale={main_width}:{main_height}[scaled]",
             f"[scaled]pad={target_width}:{target_height}:{x_pos}:{y_pos}[main_final]",
             
             # Overlay main video on background
-            "[bg_final][main_final]overlay=format=auto,format=yuv420p[v]"
-        ]
+            "[blurred][main_final]overlay=format=yuv420p[v]"
+        ])
         
         # Get source audio bitrate
         audio_bitrate = get_audio_bitrate(input_path) or "320k"
@@ -2919,6 +2934,8 @@ def process_vertical_video(input_path, output_path):
         
         # Run FFmpeg command
         logger.info("Starting FFmpeg processing")
+        logger.info(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -2933,6 +2950,7 @@ def process_vertical_video(input_path, output_path):
                 logger.debug(line.strip())
             else:
                 error_output.append(line)
+                logger.debug(line.strip())
         
         # Wait for completion
         process.wait()
