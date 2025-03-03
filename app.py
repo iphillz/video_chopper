@@ -24,6 +24,7 @@ import numpy as np
 from PIL import ImageFilter
 import json
 import os.path
+import fcntl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -136,50 +137,72 @@ def save_jobs():
     try:
         os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
         
-        # Use a temporary file for atomic write
         temp_file = f"{JOBS_FILE}.tmp"
         with open(temp_file, 'w') as f:
-            json.dump(jobs, f, indent=2)
+            # Acquire an exclusive lock for writing
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(jobs, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                
+        # Atomic rename
         os.replace(temp_file, JOBS_FILE)
-        logging.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
+        
+        # Set permissions to ensure all workers can read/write
+        os.chmod(JOBS_FILE, 0o666)
+        
+        logger.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
         return True
     except Exception as e:
-        logging.error(f"Error saving jobs: {str(e)}")
+        logger.error(f"Error saving jobs: {str(e)}")
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
         return False
 
 def load_jobs():
-    """Load jobs from persistent storage with proper initialization."""
+    """Load jobs from persistent storage with proper locking."""
     global jobs
     try:
         if not os.path.exists(JOBS_FILE):
-            logging.info(f"Jobs file {JOBS_FILE} does not exist, initializing empty jobs")
             jobs = {}
             save_jobs()
             return jobs
             
         with open(JOBS_FILE, 'r') as f:
-            loaded_jobs = json.load(f)
+            # Acquire a shared lock for reading
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                loaded_jobs = json.load(f)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             
         if not isinstance(loaded_jobs, dict):
-            logging.error(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
+            logger.warning(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
             loaded_jobs = {}
             
         jobs = loaded_jobs
-        logging.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
+        logger.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
         return jobs
     except Exception as e:
-        logging.error(f"Error loading jobs: {str(e)}")
+        logger.error(f"Error loading jobs: {str(e)}")
         jobs = {}
         return jobs
 
 def get_job_status(job_id):
-    """Get job status with proper error handling."""
+    """Get job status with proper error handling and locking."""
     global jobs
     try:
-        if not jobs:
-            load_jobs()
+        # Force reload jobs to get latest state
+        load_jobs()
             
         if job_id not in jobs:
+            logger.warning(f"Job not found: {job_id}")
             return None
             
         job = jobs[job_id]
@@ -191,15 +214,15 @@ def get_job_status(job_id):
             
         return job
     except Exception as e:
-        logging.error(f"Error getting job status: {str(e)}")
+        logger.error(f"Error getting job status: {str(e)}")
         return None
 
 def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
-    """Update job status with proper error handling."""
+    """Update job status with proper error handling and locking."""
     global jobs
     try:
-        if not jobs:
-            load_jobs()
+        # Force reload jobs to get latest state
+        load_jobs()
             
         if job_id not in jobs:
             # Initialize new job
@@ -224,11 +247,11 @@ def update_job_status(job_id, status, message=None, download_url=None, output_fi
             if output_file is not None:
                 job['output_file'] = output_file
                 
-        # Save immediately
+        # Save immediately with proper locking
         save_jobs()
         return True
     except Exception as e:
-        logging.error(f"Error updating job status: {str(e)}")
+        logger.error(f"Error updating job status: {str(e)}")
         return False
 
 # Load jobs at startup
@@ -2294,20 +2317,27 @@ def generate_download_url(filename):
     }
 })
 def job_status(job_id):
-    job = get_job_status(job_id)
-    if not job:
-        return jsonify({'error': 'Job not found'}), 404
+    """Get job status with improved error handling."""
+    try:
+        job = get_job_status(job_id)
+        if not job:
+            logger.error(f"Job not found: {job_id}")
+            logger.debug(f"Current jobs: {list(jobs.keys())}")
+            return jsonify({'error': 'Job not found'}), 404
+            
+        response = {
+            'job_id': job_id,
+            'status': job['status'],
+            'message': job.get('message', ''),
+        }
         
-    response = {
-        'job_id': job_id,
-        'status': job['status'],
-        'message': job.get('message', ''),
-    }
-    
-    if job['status'] == 'completed' and 'download_url' in job:
-        response['download_url'] = job['download_url']
-        
-    return jsonify(response)
+        if job['status'] == 'completed' and 'download_url' in job:
+            response['download_url'] = job['download_url']
+            
+        return jsonify(response)
+    except Exception as e:
+        logger.error(f"Error in job_status endpoint: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/download_url/<job_id>', methods=['GET'])
 @swag_from({

@@ -58,8 +58,10 @@ RUN mkdir -p /app/videos \
     && mkdir -p /app/auth \
     && mkdir -p /app/logs \
     && mkdir -p /tmp/video_processing \
-    && chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing \
-    && chmod -R 777 /app/videos /app/auth /app/logs /tmp/video_processing
+    && touch /app/jobs.json \
+    && chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing /app/jobs.json \
+    && chmod -R 777 /app/videos /app/auth /app/logs /tmp/video_processing \
+    && chmod 666 /app/jobs.json
 
 # Copy YouTube cookie files into container (if available)
 COPY cookies.txt /app/cookies.txt
