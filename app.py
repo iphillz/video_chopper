@@ -149,10 +149,10 @@ def save_jobs():
 
 def load_jobs():
     """Load jobs from persistent storage with proper initialization."""
+    global jobs
     try:
         if not os.path.exists(JOBS_FILE):
             logging.info(f"Jobs file {JOBS_FILE} does not exist, initializing empty jobs")
-            global jobs
             jobs = {}
             save_jobs()
             return jobs
@@ -164,21 +164,17 @@ def load_jobs():
             logging.error(f"Invalid jobs data structure in {JOBS_FILE}, initializing empty jobs")
             loaded_jobs = {}
             
-        # Update global jobs
-        global jobs
         jobs = loaded_jobs
-        
         logging.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
         return jobs
     except Exception as e:
         logging.error(f"Error loading jobs: {str(e)}")
-        # Initialize empty jobs on error
-        global jobs
         jobs = {}
         return jobs
 
 def get_job_status(job_id):
     """Get job status with proper error handling."""
+    global jobs
     try:
         if not jobs:
             load_jobs()
@@ -200,6 +196,7 @@ def get_job_status(job_id):
 
 def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
     """Update job status with proper error handling."""
+    global jobs
     try:
         if not jobs:
             load_jobs()
@@ -234,8 +231,7 @@ def update_job_status(job_id, status, message=None, download_url=None, output_fi
         logging.error(f"Error updating job status: {str(e)}")
         return False
 
-# Initialize jobs at startup
-jobs = {}
+# Load jobs at startup
 load_jobs()
 
 def extract_file_id(google_drive_link):
