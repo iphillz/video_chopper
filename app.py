@@ -2803,31 +2803,56 @@ def blur_clip(clip, radius=30):
 def process_vertical_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format with blurred background."""
     try:
+        # Get source audio bitrate
+        audio_bitrate = get_audio_bitrate(input_path) or "320k"
+        
         # Load the video with lower memory usage
         video = VideoFileClip(input_path, audio=True)
         
         # Calculate dimensions for 9:16 aspect ratio
-        target_width = video.h * 9 // 16  # Height determines width for 9:16
-        
+        if video.w > video.h:  # If input is landscape (16:9)
+            target_height = video.w * 16 // 9  # New height based on original width
+            target_width = video.w  # Keep original width
+        else:  # If input is already portrait
+            target_width = video.h * 9 // 16  # New width based on original height
+            target_height = video.h  # Keep original height
+            
         # Create background (blurred and scaled version of the video)
-        # Use FFmpeg for the initial scaling for better performance
+        # Use FFmpeg for the initial scaling and blurring for better performance
         temp_scaled = tempfile.mktemp(suffix='.mp4')
-        scale_cmd = f'ffmpeg -i {input_path} -vf "scale=iw*2:-1,gblur=sigma=15" -c:v libx264 -preset ultrafast {temp_scaled}'
-        os.system(scale_cmd)
+        scale_cmd = [
+            'ffmpeg', '-i', input_path,
+            '-vf', f'scale={target_width}:{target_height},gblur=sigma=20',
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-an',  # No audio needed for background
+            temp_scaled
+        ]
+        subprocess.run(scale_cmd, check=True)
         
+        # Load the blurred background
         background = VideoFileClip(temp_scaled)
         background = background.set_opacity(0.5)  # Set opacity to 50%
         
-        # Resize original video to fit in the center while maintaining aspect ratio
-        main_video = resize_clip(video, width=target_width)
+        # Calculate the size for the main video to fit in 9:16 frame
+        # while maintaining its aspect ratio
+        if video.w / video.h > 9/16:  # If video is wider than 9:16
+            main_width = target_width
+            main_height = int(target_width * video.h / video.w)
+        else:  # If video is taller than 9:16
+            main_height = target_height
+            main_width = int(target_height * video.w / video.h)
+            
+        # Resize main video
+        main_video = video.resize((main_width, main_height))
         
         # Calculate position to center the main video
-        x_center = (background.w - main_video.w) // 2
+        x_center = (target_width - main_width) // 2
+        y_center = (target_height - main_height) // 2
         
-        # Create composite
+        # Create composite with correct dimensions
         final = CompositeVideoClip(
-            [background, main_video.set_position((x_center, 0))],
-            size=(background.w, background.h)
+            [background, main_video.set_position((x_center, y_center))],
+            size=(target_width, target_height)
         )
         
         # Write the result with optimized settings
@@ -2835,6 +2860,7 @@ def process_vertical_video(input_path, output_path):
             output_path,
             codec='libx264',
             audio_codec='aac',
+            audio_bitrate=audio_bitrate,  # Use source bitrate
             temp_audiofile='temp-audio.m4a',
             remove_temp=True,
             threads=16,  # Use all available CPU cores
@@ -3030,6 +3056,9 @@ def process_vertical():
 def process_vertical_zoom_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format using zoom and pan effect."""
     try:
+        # Get source audio bitrate
+        audio_bitrate = get_audio_bitrate(input_path) or "320k"
+        
         # Load the video with lower memory usage
         video = VideoFileClip(input_path, audio=True)
         
@@ -3077,6 +3106,7 @@ def process_vertical_zoom_video(input_path, output_path):
             output_path,
             codec='libx264',
             audio_codec='aac',
+            audio_bitrate=audio_bitrate,  # Use source bitrate
             temp_audiofile='temp-audio.m4a',
             remove_temp=True,
             threads=16,  # Use all available CPU cores
@@ -3267,6 +3297,74 @@ def process_vertical_zoom():
         error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
         error_response.headers.add('Access-Control-Allow-Origin', '*')
         return error_response, 500
+
+def get_audio_bitrate(file_path):
+    """Get the audio bitrate of a video file using ffprobe."""
+    try:
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-select_streams', 'a:0',
+            '-show_entries', 'stream=bit_rate',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        bitrate = result.stdout.strip()
+        
+        # If bitrate is not found, return None
+        if not bitrate:
+            return None
+            
+        # Convert to integer (removing any decimals)
+        bitrate = int(float(bitrate))
+        
+        # Return bitrate in k (1000s)
+        return f"{bitrate // 1000}k"
+    except Exception as e:
+        logger.warning(f"Could not detect audio bitrate: {str(e)}")
+        return None
+
+def cleanup_old_files():
+    """Clean up temporary and processed files older than 24 hours."""
+    try:
+        current_time = time.time()
+        cleanup_dirs = [
+            tempfile.gettempdir(),  # System temp directory
+            VIDEO_DIR  # Processed videos directory
+        ]
+        
+        for directory in cleanup_dirs:
+            if not os.path.exists(directory):
+                continue
+                
+            for filename in os.listdir(directory):
+                filepath = os.path.join(directory, filename)
+                try:
+                    # Skip if not a file
+                    if not os.path.isfile(filepath):
+                        continue
+                        
+                    # Get file stats
+                    stats = os.stat(filepath)
+                    last_modified = stats.st_mtime
+                    
+                    # If file is older than 24 hours
+                    if current_time - last_modified > 24 * 60 * 60:
+                        # For temp files, delete immediately
+                        if directory == tempfile.gettempdir():
+                            os.remove(filepath)
+                            logger.info(f"Deleted old temp file: {filepath}")
+                        # For processed videos, only delete mp4 files
+                        elif filename.endswith('.mp4'):
+                            os.remove(filepath)
+                            logger.info(f"Deleted old processed video: {filepath}")
+                            
+                except Exception as e:
+                    logger.warning(f"Error cleaning up file {filepath}: {str(e)}")
+                    
+    except Exception as e:
+        logger.error(f"Error in cleanup_old_files: {str(e)}")
 
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
