@@ -2809,101 +2809,88 @@ def blur_clip(clip, radius=30):
     return clip.fl_image(blur_frame)
 
 def process_vertical_video(input_path, output_path):
-    """Process the video to convert from 16:9 to 9:16 format with blurred background."""
     try:
-        # Get source audio bitrate
-        audio_bitrate = get_audio_bitrate(input_path) or "320k"
+        # Load the video with audio
+        video = VideoFileClip(input_path)
         
-        # Load the video with lower memory usage
-        video = VideoFileClip(input_path, audio=True)
+        # Get video dimensions
+        width, height = video.size
+        logger.info(f"Main video dimensions: {width}x{height}")
         
-        # Calculate dimensions for 9:16 aspect ratio
-        if video.w > video.h:  # If input is landscape (16:9)
-            # Make sure width is even
-            target_width = (video.w // 2) * 2
-            # Calculate height for 9:16 ratio and make it even
-            target_height = ((target_width * 16) // 9) // 2 * 2
-        else:  # If input is already portrait
-            # Make sure height is even
-            target_height = (video.h // 2) * 2
-            # Calculate width for 9:16 ratio and make it even
-            target_width = ((target_height * 9) // 16) // 2 * 2
-            
+        # Calculate target dimensions for 9:16 aspect ratio
+        target_height = int(width * (16/9))
+        target_width = width
+        
+        # Ensure dimensions are even numbers for h264 encoding
+        target_width = (target_width // 2) * 2
+        target_height = (target_height // 2) * 2
+        
         logger.info(f"Converting video to {target_width}x{target_height}")
-            
-        # Create background (blurred and scaled version of the video)
-        # Use FFmpeg for the initial scaling and blurring for better performance
-        temp_scaled = tempfile.mktemp(suffix='.mp4')
-        scale_cmd = [
-            'ffmpeg', '-i', input_path,
-            '-vf', f'scale={target_width}:{target_height},gblur=sigma=20',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-an',  # No audio needed for background
-            temp_scaled
-        ]
-        subprocess.run(scale_cmd, check=True)
+        
+        # Create blurred background using FFmpeg
+        blur_cmd = (
+            f'ffmpeg -i {input_path} -vf "scale={target_width}:{target_height},'
+            f'gblur=sigma=30" -c:v libx264 -preset ultrafast -y {output_path}.bg.mp4'
+        )
+        subprocess.run(blur_cmd, shell=True, check=True)
         
         # Load the blurred background
-        background = VideoFileClip(temp_scaled)
-        background = background.set_opacity(0.5)  # Set opacity to 50%
+        background = VideoFileClip(f"{output_path}.bg.mp4")
         
-        # Calculate the size for the main video to fit in 9:16 frame
-        # while maintaining aspect ratio
-        if video.w / video.h > 9/16:  # If video is wider than 9:16
-            main_width = target_width
-            main_height = int((target_width * video.h / video.w) // 2 * 2)  # Ensure even height
-        else:  # If video is taller than 9:16
-            main_height = target_height
-            main_width = int((target_height * video.w / video.h) // 2 * 2)  # Ensure even width
-            
-        logger.info(f"Main video dimensions: {main_width}x{main_height}")
-            
-        # Resize main video
-        main_video = video.resize((main_width, main_height))
+        # Calculate dimensions for the main video
+        main_height = int(target_height * 0.7)  # 70% of the frame height
+        main_width = int(main_height * (width/height))
+        
+        # Ensure main video dimensions are even
+        main_width = (main_width // 2) * 2
+        main_height = (main_height // 2) * 2
+        
+        logger.info(f"Resizing main video to {main_width}x{main_height}")
+        
+        # Use our custom resize_clip function
+        main_video = resize_clip(video, width=main_width, height=main_height)
         
         # Calculate position to center the main video
-        x_center = (target_width - main_width) // 2
-        y_center = (target_height - main_height) // 2
+        x_pos = (target_width - main_width) // 2
+        y_pos = (target_height - main_height) // 2
         
-        # Create composite with correct dimensions
+        logger.info(f"Positioning main video at ({x_pos}, {y_pos})")
+        
+        # Composite the videos
         final = CompositeVideoClip(
-            [background, main_video.set_position((x_center, y_center))],
+            [
+                background.set_opacity(0.5),
+                main_video.set_position((x_pos, y_pos))
+            ],
             size=(target_width, target_height)
         )
         
-        # Write the result with optimized settings
+        # Write the final video with optimized settings
         final.write_videofile(
             output_path,
             codec='libx264',
             audio_codec='aac',
-            audio_bitrate=audio_bitrate,  # Use source bitrate
-            temp_audiofile='temp-audio.m4a',
-            remove_temp=True,
-            threads=16,  # Use all available CPU cores
-            preset='ultrafast',  # Fastest encoding
+            preset='ultrafast',
+            threads=16,
             ffmpeg_params=[
-                '-tune', 'fastdecode',
-                '-movflags', '+faststart',
-                '-bf', '2',  # Use 2 B-frames for better compression
-                '-g', '30',  # Keyframe interval
-                '-sc_threshold', '0'  # Disable scene change detection for speed
+                '-profile:v', 'baseline',
+                '-level', '3.0',
+                '-pix_fmt', 'yuv420p'
             ]
         )
         
-        # Clean up
+        # Clean up temporary files
+        os.remove(f"{output_path}.bg.mp4")
+        
+        # Close video clips
         video.close()
         background.close()
-        main_video.close()
         final.close()
-        if os.path.exists(temp_scaled):
-            os.remove(temp_scaled)
         
-        return True
     except Exception as e:
         logger.error(f"Error in process_vertical_video: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return False
+        raise
 
 def process_vertical_video_job(job_id, google_drive_link):
     """Background job to process a video into vertical format."""
