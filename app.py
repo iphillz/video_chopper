@@ -2779,16 +2779,24 @@ def process_youtube():
         error_response.headers.add('Access-Control-Allow-Origin', '*')
         return error_response, 500
 
-def resize_clip(clip, **kwargs):
-    """Custom resize function that uses the correct resampling method."""
+def resize_clip(clip, width=None, height=None, **kwargs):
+    """Resize the clip to the specified dimensions while maintaining aspect ratio."""
+    if width is None and height is None:
+        raise ValueError("At least one of width or height must be specified")
+
+    w, h = clip.size
+    aspect_ratio = float(w) / float(h)
+
+    if width is None:
+        width = int(height * aspect_ratio)
+    elif height is None:
+        height = int(width / aspect_ratio)
+
     def resize_frame(frame):
         img = Image.fromarray(frame)
-        resized = img.resize(
-            (kwargs.get('width', img.width), kwargs.get('height', img.height)),
-            Image.Resampling.LANCZOS
-        )
+        resized = img.resize((width, height), Image.Resampling.LANCZOS)
         return np.array(resized)
-    
+
     return clip.fl_image(resize_frame)
 
 def blur_clip(clip, radius=30):
