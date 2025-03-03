@@ -194,49 +194,48 @@ def load_jobs():
         jobs = {}
 
 def get_job_status(job_id):
-    """Get job status with proper error handling and job cleanup."""
     try:
-        # Load latest jobs
-        load_jobs()
-        
+        jobs = load_jobs()
         if job_id not in jobs:
             return None
-            
-        # Update last accessed time
-        jobs[job_id]['last_accessed'] = time.time()
-        save_jobs()
+        job = jobs[job_id]
         
-        return jobs[job_id]
+        # Don't update last_accessed for completed jobs
+        if job['status'] != 'completed':
+            job['last_accessed'] = time.time()
+            save_jobs()
+            
+        return job
     except Exception as e:
-        logger.error(f"Error getting job status: {str(e)}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Error getting job status: {str(e)}")
         return None
 
 def update_job_status(job_id, status, message=None, download_url=None, output_file=None):
-    """Update job status with proper error handling."""
     try:
-        # Load latest jobs first
-        load_jobs()
-        
+        jobs = load_jobs()
         if job_id not in jobs:
-            jobs[job_id] = {
-                'created_at': time.time(),
-                'last_accessed': time.time()
-            }
+            logging.error(f"Job {job_id} not found when updating status")
+            return False
             
-        jobs[job_id].update({
-            'status': status,
-            'message': message if message is not None else jobs[job_id].get('message', ''),
-            'download_url': download_url if download_url is not None else jobs[job_id].get('download_url', ''),
-            'output_file': output_file if output_file is not None else jobs[job_id].get('output_file', ''),
-            'last_accessed': time.time()
-        })
+        job = jobs[job_id]
+        job['status'] = status
+        job['last_accessed'] = time.time()
         
-        # Save immediately
-        save_jobs()
+        if message is not None:
+            job['message'] = message
+        if download_url is not None:
+            job['download_url'] = download_url
+        if output_file is not None:
+            job['output_file'] = output_file
+            
+        # Only save if the status changed to completed or if it's not completed
+        if status == 'completed' or job.get('status') != 'completed':
+            save_jobs()
+            
+        return True
     except Exception as e:
-        logger.error(f"Error updating job status: {str(e)}")
-        logger.error(traceback.format_exc())
+        logging.error(f"Error updating job status: {str(e)}")
+        return False
 
 # Initialize jobs at startup
 if not os.path.exists(JOBS_FILE):
@@ -2311,11 +2310,11 @@ def job_status(job_id):
         
     response = {
         'job_id': job_id,
-        'status': job.get('status', 'unknown'),
+        'status': job['status'],
         'message': job.get('message', ''),
     }
     
-    if job.get('download_url'):
+    if job['status'] == 'completed' and 'download_url' in job:
         response['download_url'] = job['download_url']
         
     return jsonify(response)
