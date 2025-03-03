@@ -2803,15 +2803,19 @@ def blur_clip(clip, radius=30):
 def process_vertical_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format with blurred background."""
     try:
-        # Load the video
-        video = VideoFileClip(input_path)
+        # Load the video with lower memory usage
+        video = VideoFileClip(input_path, audio=True)
         
         # Calculate dimensions for 9:16 aspect ratio
         target_width = video.h * 9 // 16  # Height determines width for 9:16
         
         # Create background (blurred and scaled version of the video)
-        background = resize_clip(video, height=video.h * 2)  # Scale up to ensure it covers
-        background = blur_clip(background, radius=15)  # Apply strong blur
+        # Use FFmpeg for the initial scaling for better performance
+        temp_scaled = tempfile.mktemp(suffix='.mp4')
+        scale_cmd = f'ffmpeg -i {input_path} -vf "scale=iw*2:-1,gblur=sigma=15" -c:v libx264 -preset ultrafast {temp_scaled}'
+        os.system(scale_cmd)
+        
+        background = VideoFileClip(temp_scaled)
         background = background.set_opacity(0.5)  # Set opacity to 50%
         
         # Resize original video to fit in the center while maintaining aspect ratio
@@ -2826,13 +2830,22 @@ def process_vertical_video(input_path, output_path):
             size=(background.w, background.h)
         )
         
-        # Write the result
+        # Write the result with optimized settings
         final.write_videofile(
             output_path,
             codec='libx264',
             audio_codec='aac',
             temp_audiofile='temp-audio.m4a',
-            remove_temp=True
+            remove_temp=True,
+            threads=16,  # Use all available CPU cores
+            preset='ultrafast',  # Fastest encoding
+            ffmpeg_params=[
+                '-tune', 'fastdecode',
+                '-movflags', '+faststart',
+                '-bf', '2',  # Use 2 B-frames for better compression
+                '-g', '30',  # Keyframe interval
+                '-sc_threshold', '0'  # Disable scene change detection for speed
+            ]
         )
         
         # Clean up
@@ -2840,6 +2853,8 @@ def process_vertical_video(input_path, output_path):
         background.close()
         main_video.close()
         final.close()
+        if os.path.exists(temp_scaled):
+            os.remove(temp_scaled)
         
         return True
     except Exception as e:
@@ -3015,15 +3030,21 @@ def process_vertical():
 def process_vertical_zoom_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format using zoom and pan effect."""
     try:
-        # Load the video
-        video = VideoFileClip(input_path)
+        # Load the video with lower memory usage
+        video = VideoFileClip(input_path, audio=True)
         
         # Calculate dimensions for 9:16 aspect ratio
         target_height = video.w * 16 // 9  # Width determines height for 9:16
         
         # Create a zoomed clip that's larger than needed to allow for movement
         zoom_factor = 1.5
-        zoomed = resize_clip(video, width=int(video.w * zoom_factor))
+        
+        # Use FFmpeg for initial scaling for better performance
+        temp_scaled = tempfile.mktemp(suffix='.mp4')
+        scale_cmd = f'ffmpeg -i {input_path} -vf "scale={int(video.w * zoom_factor)}:-1" -c:v libx264 -preset ultrafast {temp_scaled}'
+        os.system(scale_cmd)
+        
+        zoomed = VideoFileClip(temp_scaled)
         
         # Calculate the maximum amount we can pan
         max_x_pan = zoomed.w - video.w
@@ -3051,19 +3072,30 @@ def process_vertical_zoom_video(input_path, output_path):
             height=target_height
         )
         
-        # Write the result
+        # Write the result with optimized settings
         vertical.write_videofile(
             output_path,
             codec='libx264',
             audio_codec='aac',
             temp_audiofile='temp-audio.m4a',
-            remove_temp=True
+            remove_temp=True,
+            threads=16,  # Use all available CPU cores
+            preset='ultrafast',  # Fastest encoding
+            ffmpeg_params=[
+                '-tune', 'fastdecode',
+                '-movflags', '+faststart',
+                '-bf', '2',  # Use 2 B-frames for better compression
+                '-g', '30',  # Keyframe interval
+                '-sc_threshold', '0'  # Disable scene change detection for speed
+            ]
         )
         
         # Clean up
         video.close()
         zoomed.close()
         vertical.close()
+        if os.path.exists(temp_scaled):
+            os.remove(temp_scaled)
         
         return True
     except Exception as e:
