@@ -2947,9 +2947,9 @@ def process_vertical_video(input_path, output_path):
         # Final composition
         logger.info("Creating final composition...")
         filter_complex = [
-            f"[1:v]scale={main_width}:{main_height}[main]",
-            f"[main]pad={target_width}:{target_height}:{x_pos}:{y_pos}[padded]",
-            "[0:v][padded]overlay[v]"
+            f"[1:v]scale={main_width}:{main_height}[scaled]",
+            f"[scaled]pad={target_width}:{target_height}:{x_pos}:{y_pos}:black[padded]",
+            "[0:v][padded]overlay=format=auto[v]"
         ]
         
         ffmpeg_cmd = [
@@ -2960,7 +2960,7 @@ def process_vertical_video(input_path, output_path):
             '-map', '[v]',
             '-map', '1:a?',
             '-c:v', 'libx264',
-            '-pix_fmt', 'yuv420p',  # Set pixel format here instead
+            '-pix_fmt', 'yuv420p',
             '-preset', 'veryfast',
             '-tune', 'fastdecode',
             '-crf', '23',
