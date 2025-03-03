@@ -19,6 +19,8 @@ from datetime import datetime
 import traceback
 import sys
 import math
+from PIL import Image
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2776,6 +2778,18 @@ def process_youtube():
         error_response.headers.add('Access-Control-Allow-Origin', '*')
         return error_response, 500
 
+def resize_clip(clip, **kwargs):
+    """Custom resize function that uses the correct resampling method."""
+    def resize_frame(frame):
+        img = Image.fromarray(frame)
+        resized = img.resize(
+            (kwargs.get('width', img.width), kwargs.get('height', img.height)),
+            Image.Resampling.LANCZOS
+        )
+        return np.array(resized)
+    
+    return clip.fl_image(resize_frame)
+
 def process_vertical_video(input_path, output_path):
     """Process the video to convert from 16:9 to 9:16 format with blurred background."""
     try:
@@ -2786,12 +2800,12 @@ def process_vertical_video(input_path, output_path):
         target_width = video.h * 9 // 16  # Height determines width for 9:16
         
         # Create background (blurred and scaled version of the video)
-        background = video.resize(height=video.h * 2)  # Scale up to ensure it covers
+        background = resize_clip(video, height=video.h * 2)  # Scale up to ensure it covers
         background = background.fx(vfx.blur, radius=30)  # Apply strong blur
         background = background.set_opacity(0.5)  # Set opacity to 50%
         
         # Resize original video to fit in the center while maintaining aspect ratio
-        main_video = video.resize(width=target_width)
+        main_video = resize_clip(video, width=target_width)
         
         # Calculate position to center the main video
         x_center = (background.w - main_video.w) // 2
@@ -2999,7 +3013,7 @@ def process_vertical_zoom_video(input_path, output_path):
         
         # Create a zoomed clip that's larger than needed to allow for movement
         zoom_factor = 1.5
-        zoomed = video.resize(width=video.w * zoom_factor)
+        zoomed = resize_clip(video, width=int(video.w * zoom_factor))
         
         # Calculate the maximum amount we can pan
         max_x_pan = zoomed.w - video.w
