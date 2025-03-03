@@ -2821,7 +2821,6 @@ def process_vertical_video(input_path, output_path):
             input_path
         ]
         
-        # Use subprocess.run instead of check_output for better error handling
         probe_process = subprocess.run(
             probe_cmd,
             stdout=subprocess.PIPE,
@@ -2837,13 +2836,24 @@ def process_vertical_video(input_path, output_path):
             raise Exception("No video stream found in the input file")
             
         stream_data = probe_data['streams'][0]
-        width = int(stream_data.get('width', 0))
-        height = int(stream_data.get('height', 0))
+        orig_width = int(stream_data.get('width', 0))
+        orig_height = int(stream_data.get('height', 0))
         
-        if width == 0 or height == 0:
-            raise Exception(f"Invalid video dimensions: {width}x{height}")
+        if orig_width == 0 or orig_height == 0:
+            raise Exception(f"Invalid video dimensions: {orig_width}x{orig_height}")
             
-        logger.info(f"Input video dimensions: {width}x{height}")
+        logger.info(f"Original video dimensions: {orig_width}x{orig_height}")
+        
+        # Scale down to 1080p equivalent if larger
+        scale_factor = min(1.0, 1920 / orig_width)
+        width = int(orig_width * scale_factor)
+        height = int(orig_height * scale_factor)
+        
+        # Ensure dimensions are even
+        width = (width // 2) * 2
+        height = (height // 2) * 2
+        
+        logger.info(f"Scaled input dimensions: {width}x{height}")
         
         # Calculate target dimensions for 9:16 aspect ratio
         target_height = int(width * (16/9))
@@ -2867,8 +2877,11 @@ def process_vertical_video(input_path, output_path):
         
         # Create the FFmpeg filter complex command
         filter_complex = [
-            # Split the input into two streams
-            "[0:v]split=2[main][bg]",
+            # Scale input first if needed
+            f"[0:v]scale={width}:{height}[scaled_input]",
+            
+            # Split the scaled input into two streams
+            "[scaled_input]split=2[main][bg]",
             
             # Process background: scale, blur, and set opacity
             f"[bg]scale={target_width}:{target_height},gblur=sigma=30[blurred]",
@@ -2913,16 +2926,21 @@ def process_vertical_video(input_path, output_path):
             universal_newlines=True
         )
         
-        # Monitor FFmpeg progress
+        # Monitor FFmpeg progress and capture error output
+        error_output = []
         for line in process.stderr:
             if 'frame=' in line:
                 logger.debug(line.strip())
+            else:
+                error_output.append(line)
         
         # Wait for completion
         process.wait()
         
         if process.returncode != 0:
-            raise Exception("FFmpeg processing failed")
+            error_msg = ''.join(error_output)
+            logger.error(f"FFmpeg error output: {error_msg}")
+            raise Exception(f"FFmpeg processing failed: {error_msg}")
         
         logger.info("Video processing completed successfully")
         return True
