@@ -134,19 +134,31 @@ JOBS_FILE = os.path.join(os.path.dirname(__file__), 'jobs.json')
 def save_jobs():
     """Save jobs to persistent storage."""
     try:
-        with open(JOBS_FILE, 'w') as f:
-            # Convert any non-serializable objects to strings
-            jobs_to_save = {}
-            for job_id, job_data in jobs.items():
-                jobs_to_save[job_id] = {
-                    'status': job_data.get('status', ''),
-                    'message': job_data.get('message', ''),
-                    'created_at': job_data.get('created_at', 0),
-                    'download_url': job_data.get('download_url', ''),
-                }
-            json.dump(jobs_to_save, f)
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(JOBS_FILE), exist_ok=True)
+        
+        # Convert any non-serializable objects to strings
+        jobs_to_save = {}
+        for job_id, job_data in jobs.items():
+            jobs_to_save[job_id] = {
+                'status': job_data.get('status', ''),
+                'message': job_data.get('message', ''),
+                'created_at': job_data.get('created_at', time.time()),
+                'download_url': job_data.get('download_url', ''),
+                'output_file': job_data.get('output_file', ''),
+            }
+        
+        # Write to a temporary file first
+        temp_file = f"{JOBS_FILE}.tmp"
+        with open(temp_file, 'w') as f:
+            json.dump(jobs_to_save, f, indent=2)
+        
+        # Atomically replace the old file
+        os.replace(temp_file, JOBS_FILE)
+        logger.info(f"Successfully saved {len(jobs)} jobs to {JOBS_FILE}")
     except Exception as e:
         logger.error(f"Error saving jobs: {str(e)}")
+        logger.error(traceback.format_exc())
 
 def load_jobs():
     """Load jobs from persistent storage."""
@@ -154,13 +166,28 @@ def load_jobs():
     try:
         if os.path.exists(JOBS_FILE):
             with open(JOBS_FILE, 'r') as f:
-                jobs = json.load(f)
+                loaded_jobs = json.load(f)
+                # Validate and clean loaded jobs
+                for job_id, job_data in loaded_jobs.items():
+                    if not isinstance(job_data, dict):
+                        logger.warning(f"Invalid job data for {job_id}, skipping")
+                        continue
+                    if 'status' not in job_data:
+                        logger.warning(f"Job {job_id} missing status, skipping")
+                        continue
+                    jobs[job_id] = job_data
+                logger.info(f"Successfully loaded {len(jobs)} jobs from {JOBS_FILE}")
     except Exception as e:
         logger.error(f"Error loading jobs: {str(e)}")
+        logger.error(traceback.format_exc())
         jobs = {}
 
-# Load jobs at startup
-load_jobs()
+# Initialize jobs at startup
+if not os.path.exists(JOBS_FILE):
+    jobs = {}
+    save_jobs()
+else:
+    load_jobs()
 
 def extract_file_id(google_drive_link):
     """Extract the file ID from a Google Drive link."""
@@ -3017,9 +3044,13 @@ def process_vertical_video(input_path, output_path):
 def process_vertical_video_job(job_id, google_drive_link):
     """Background job to process a video into vertical format."""
     try:
-        # Update job status
-        jobs[job_id]["status"] = "processing"
-        jobs[job_id]["message"] = "Downloading video from Google Drive"
+        # Update and save job status
+        jobs[job_id] = {
+            "status": "processing",
+            "message": "Downloading video from Google Drive",
+            "created_at": time.time()
+        }
+        save_jobs()
         
         # Create temporary file for download
         temp_dir = tempfile.mkdtemp()
@@ -3031,6 +3062,7 @@ def process_vertical_video_job(job_id, google_drive_link):
             
             # Update status
             jobs[job_id]["message"] = "Converting video to vertical format"
+            save_jobs()
             
             # Process the video
             output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
@@ -3044,8 +3076,10 @@ def process_vertical_video_job(job_id, google_drive_link):
                 jobs[job_id].update({
                     "status": "completed",
                     "message": "Video processing completed",
-                    "download_url": download_url
+                    "download_url": download_url,
+                    "output_file": f"{job_id}.mp4"
                 })
+                save_jobs()
             else:
                 raise Exception("Failed to process video")
                 
@@ -3060,6 +3094,7 @@ def process_vertical_video_job(job_id, google_drive_link):
             "status": "failed",
             "message": f"Processing failed: {str(e)}"
         })
+        save_jobs()
 
 @app.route('/process_vertical', methods=['POST'])
 @swag_from({
