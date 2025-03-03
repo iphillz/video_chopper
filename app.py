@@ -8,7 +8,8 @@ from flask import Flask, request, jsonify, send_from_directory, redirect, url_fo
 from flask_cors import CORS
 import requests
 import tempfile
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip, clips_array
+import moviepy.video.fx.all as vfx
 import shutil
 from flasgger import Swagger, swag_from
 import yt_dlp
@@ -17,6 +18,7 @@ import random
 from datetime import datetime
 import traceback
 import sys
+import math
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2767,6 +2769,442 @@ def process_youtube():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response, 202
     
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
+
+def process_vertical_video(input_path, output_path):
+    """Process the video to convert from 16:9 to 9:16 format with blurred background."""
+    try:
+        # Load the video
+        video = VideoFileClip(input_path)
+        
+        # Calculate dimensions for 9:16 aspect ratio
+        target_width = video.h * 9 // 16  # Height determines width for 9:16
+        
+        # Create background (blurred and scaled version of the video)
+        background = video.resize(height=video.h * 2)  # Scale up to ensure it covers
+        background = background.fx(vfx.blur, radius=30)  # Apply strong blur
+        background = background.set_opacity(0.5)  # Set opacity to 50%
+        
+        # Resize original video to fit in the center while maintaining aspect ratio
+        main_video = video.resize(width=target_width)
+        
+        # Calculate position to center the main video
+        x_center = (background.w - main_video.w) // 2
+        
+        # Create composite
+        final = CompositeVideoClip(
+            [background, main_video.set_position((x_center, 0))],
+            size=(background.w, background.h)
+        )
+        
+        # Write the result
+        final.write_videofile(
+            output_path,
+            codec='libx264',
+            audio_codec='aac',
+            temp_audiofile='temp-audio.m4a',
+            remove_temp=True
+        )
+        
+        # Clean up
+        video.close()
+        background.close()
+        main_video.close()
+        final.close()
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error in process_vertical_video: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
+def process_vertical_video_job(job_id, google_drive_link):
+    """Background job to process a video into vertical format."""
+    try:
+        # Update job status
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["message"] = "Downloading video from Google Drive"
+        
+        # Create temporary file for download
+        temp_dir = tempfile.mkdtemp()
+        input_path = os.path.join(temp_dir, "input.mp4")
+        
+        try:
+            # Download the video
+            download_from_google_drive(google_drive_link, input_path)
+            
+            # Update status
+            jobs[job_id]["message"] = "Converting video to vertical format"
+            
+            # Process the video
+            output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
+            success = process_vertical_video(input_path, output_path)
+            
+            if success:
+                # Generate download URL
+                download_url = generate_download_url(f"{job_id}.mp4")
+                
+                # Update job status
+                jobs[job_id].update({
+                    "status": "completed",
+                    "message": "Video processing completed",
+                    "download_url": download_url
+                })
+            else:
+                raise Exception("Failed to process video")
+                
+        finally:
+            # Clean up temporary directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+    except Exception as e:
+        logger.error(f"Error in process_vertical_video_job: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        jobs[job_id].update({
+            "status": "failed",
+            "message": f"Processing failed: {str(e)}"
+        })
+
+@app.route('/process_vertical', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Convert 16:9 video to 9:16 vertical format',
+    'description': 'Downloads a video from Google Drive and converts it to vertical 9:16 format. '
+                  'The original video is centered in the frame, while a blurred, scaled version '
+                  'of the same video is used as the background. The processing happens asynchronously '
+                  'and returns a job ID that can be used to check status.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['google_drive_link'],
+                'properties': {
+                    'google_drive_link': {
+                        'type': 'string',
+                        'description': 'Shareable link to a Google Drive video. The link should be in one of these formats: https://drive.google.com/file/d/YOUR_FILE_ID/view or https://drive.google.com/open?id=YOUR_FILE_ID',
+                        'example': 'https://drive.google.com/file/d/1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ/view'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '202': {
+            'description': 'Job accepted for processing',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'status_url': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'schemes': ['https'],
+    'produces': ['application/json']
+})
+def process_vertical():
+    try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_vertical with headers: {dict(request.headers)}")
+        
+        data = request.get_json()
+        
+        if not data:
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        google_drive_link = data.get('google_drive_link')
+        
+        if not google_drive_link:
+            error_response = jsonify({"error": "No Google Drive link provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        # Create a job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
+        
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_vertical_video_job,
+            args=(job_id, google_drive_link)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL - Force HTTPS for external URLs
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+        
+        response = jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
+        
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_response = jsonify({"error": f"Unexpected error: {str(e)}"})
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
+
+def process_vertical_zoom_video(input_path, output_path):
+    """Process the video to convert from 16:9 to 9:16 format using zoom and pan effect."""
+    try:
+        # Load the video
+        video = VideoFileClip(input_path)
+        
+        # Calculate dimensions for 9:16 aspect ratio
+        target_height = video.w * 16 // 9  # Width determines height for 9:16
+        
+        # Create a zoomed clip that's larger than needed to allow for movement
+        zoom_factor = 1.5
+        zoomed = video.resize(width=video.w * zoom_factor)
+        
+        # Calculate the maximum amount we can pan
+        max_x_pan = zoomed.w - video.w
+        max_y_pan = zoomed.h - target_height
+        
+        def pan_position(t):
+            """Calculate position for pan effect based on time."""
+            # Complete one full pan cycle every 10 seconds
+            cycle = (t % 10) / 10
+            
+            # Use sine wave for smooth back-and-forth motion
+            x_pos = max_x_pan * 0.5 * (1 + math.sin(2 * math.pi * cycle))
+            y_pos = max_y_pan * 0.5 * (1 + math.sin(2 * math.pi * cycle * 0.5))
+            
+            return -x_pos, -y_pos
+        
+        # Create panning clip
+        panning = zoomed.set_position(pan_position)
+        
+        # Crop to vertical format
+        vertical = panning.crop(
+            x1=0,
+            y1=0,
+            width=video.w,
+            height=target_height
+        )
+        
+        # Write the result
+        vertical.write_videofile(
+            output_path,
+            codec='libx264',
+            audio_codec='aac',
+            temp_audiofile='temp-audio.m4a',
+            remove_temp=True
+        )
+        
+        # Clean up
+        video.close()
+        zoomed.close()
+        vertical.close()
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error in process_vertical_zoom_video: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
+def process_vertical_zoom_job(job_id, google_drive_link):
+    """Background job to process a video into vertical format with zoom and pan effect."""
+    try:
+        # Update job status
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["message"] = "Downloading video from Google Drive"
+        
+        # Create temporary file for download
+        temp_dir = tempfile.mkdtemp()
+        input_path = os.path.join(temp_dir, "input.mp4")
+        
+        try:
+            # Download the video
+            download_from_google_drive(google_drive_link, input_path)
+            
+            # Update status
+            jobs[job_id]["message"] = "Converting video to vertical format with zoom effect"
+            
+            # Process the video
+            output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
+            success = process_vertical_zoom_video(input_path, output_path)
+            
+            if success:
+                # Generate download URL
+                download_url = generate_download_url(f"{job_id}.mp4")
+                
+                # Update job status
+                jobs[job_id].update({
+                    "status": "completed",
+                    "message": "Video processing completed",
+                    "download_url": download_url
+                })
+            else:
+                raise Exception("Failed to process video")
+                
+        finally:
+            # Clean up temporary directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+    except Exception as e:
+        logger.error(f"Error in process_vertical_zoom_job: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        jobs[job_id].update({
+            "status": "failed",
+            "message": f"Processing failed: {str(e)}"
+        })
+
+@app.route('/process_vertical_zoom', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Convert 16:9 video to 9:16 vertical format with zoom and pan effect',
+    'description': 'Downloads a video from Google Drive and converts it to vertical 9:16 format '
+                  'using a dynamic zoom and pan effect. The video will smoothly pan and zoom '
+                  'across the original content to create an engaging vertical video. '
+                  'The processing happens asynchronously and returns a job ID that can be used to check status.',
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['google_drive_link'],
+                'properties': {
+                    'google_drive_link': {
+                        'type': 'string',
+                        'description': 'Shareable link to a Google Drive video. The link should be in one of these formats: https://drive.google.com/file/d/YOUR_FILE_ID/view or https://drive.google.com/open?id=YOUR_FILE_ID',
+                        'example': 'https://drive.google.com/file/d/1VSBCOeRsgplhFlSoWphyk5RkZOJ3FjQZ/view'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        '202': {
+            'description': 'Job accepted for processing',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'job_id': {'type': 'string'},
+                            'status': {'type': 'string'},
+                            'message': {'type': 'string'},
+                            'status_url': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        '400': {
+            'description': 'Bad request parameters',
+            'content': {
+                'application/json': {
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'error': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    'schemes': ['https'],
+    'produces': ['application/json']
+})
+def process_vertical_zoom():
+    try:
+        # Log the request details for debugging
+        logger.info(f"Received request to /process_vertical_zoom with headers: {dict(request.headers)}")
+        
+        data = request.get_json()
+        
+        if not data:
+            error_response = jsonify({"error": "No JSON data provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        google_drive_link = data.get('google_drive_link')
+        
+        if not google_drive_link:
+            error_response = jsonify({"error": "No Google Drive link provided"})
+            error_response.headers.add('Access-Control-Allow-Origin', '*')
+            return error_response, 400
+        
+        # Create a job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job status
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "created_at": time.time()
+        }
+        
+        # Start background thread to process video
+        thread = threading.Thread(
+            target=process_vertical_zoom_job,
+            args=(job_id, google_drive_link)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        # Return job ID and status URL - Force HTTPS for external URLs
+        status_url = url_for('job_status', job_id=job_id, _external=True)
+        if status_url.startswith('http:'):
+            status_url = status_url.replace('http:', 'https:', 1)
+        
+        response = jsonify({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Job queued for processing",
+            "status_url": status_url
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 202
+        
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
