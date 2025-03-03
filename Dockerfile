@@ -53,11 +53,13 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir yt-dlp==2025.02.19 youtube-dl==2021.12.17
 
-# Create directories for data and authentication
+# Create directories for data and authentication with proper permissions
 RUN mkdir -p /app/videos \
     && mkdir -p /app/auth \
     && mkdir -p /app/logs \
-    && chown -R chrome:chrome /app/videos /app/auth /app/logs
+    && mkdir -p /tmp/video_processing \
+    && chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing \
+    && chmod -R 777 /app/videos /app/auth /app/logs /tmp/video_processing
 
 # Copy YouTube cookie files into container (if available)
 COPY cookies.txt /app/cookies.txt
@@ -70,18 +72,22 @@ RUN chmod 644 /app/cookies.txt /app/youtube_cookies.txt /app/auth/cookies.txt ||
 # Copy application code
 COPY . /app/
 
-# Create startup script with Xvfb
+# Create startup script with Xvfb and proper permissions setup
 RUN echo '#!/bin/bash\n\
 # Start Xvfb\n\
 Xvfb :99 -screen 0 1280x1024x24 -ac &\n\
 # Wait for Xvfb to start\n\
 sleep 1\n\
+# Ensure directories exist with proper permissions\n\
+mkdir -p /app/videos /app/auth /app/logs /tmp/video_processing\n\
+chown -R chrome:chrome /app/videos /app/auth /app/logs /tmp/video_processing\n\
+chmod -R 777 /app/videos /app/auth /app/logs /tmp/video_processing\n\
 # Check if Chrome works\n\
 DISPLAY=:99 google-chrome --version\n\
 # Check Xvfb is running\n\
 ps aux | grep Xvfb\n\
 # Run the application\n\
-DISPLAY=:99 gunicorn --bind 0.0.0.0:3000 app:app --log-level debug\n' > /app/start.sh \
+DISPLAY=:99 gunicorn --bind 0.0.0.0:3000 app:app --log-level debug --timeout 300 --workers 2\n' > /app/start.sh \
     && chmod +x /app/start.sh
 
 # Make files accessible to the chrome user
@@ -99,6 +105,7 @@ ENV HTTP_PROXY=""
 ENV HTTPS_PROXY=""
 ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/google-chrome
+ENV PYTHONUNBUFFERED=1
 
 # Run start script
 CMD ["/app/start.sh"] 

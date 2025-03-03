@@ -2811,6 +2811,11 @@ def blur_clip(clip, radius=30):
 
 def process_vertical_video(input_path, output_path):
     try:
+        # Create a temporary working directory
+        temp_dir = os.path.join('/tmp/video_processing', str(uuid.uuid4()))
+        os.makedirs(temp_dir, exist_ok=True)
+        os.chmod(temp_dir, 0o777)
+        
         # Get video dimensions and metadata using ffprobe
         probe_cmd = [
             'ffprobe',
@@ -2880,60 +2885,72 @@ def process_vertical_video(input_path, output_path):
         
         logger.info(f"Processing video to {target_width}x{target_height} with main video at {main_width}x{main_height}")
         
-        # Create the FFmpeg filter complex command
-        filter_complex = []
+        # Create intermediate files in temp directory
+        scaled_file = os.path.join(temp_dir, 'scaled.mp4')
+        blurred_file = os.path.join(temp_dir, 'blurred.mp4')
         
-        # Handle rotation if needed
+        # First, scale and rotate the input
+        scale_cmd = [
+            'ffmpeg', '-y',
+            '-i', input_path,
+            '-vf', f'scale={width}:{height},format=yuv420p',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-c:a', 'copy',
+            scaled_file
+        ]
+        
         if rotation == 90:
-            filter_complex.append("[0:v]transpose=2")  # Rotate clockwise
+            scale_cmd[5] = f'transpose=2,scale={width}:{height},format=yuv420p'
         elif rotation == -90:
-            filter_complex.append("[0:v]transpose=1")  # Rotate counterclockwise
+            scale_cmd[5] = f'transpose=1,scale={width}:{height},format=yuv420p'
         
-        # Add initial scale and format conversion
-        if filter_complex:
-            filter_complex.append(f"[rotated]scale={width}:{height},format=yuv420p[scaled_input]")
-        else:
-            filter_complex.append(f"[0:v]scale={width}:{height},format=yuv420p[scaled_input]")
+        logger.info("Scaling input video...")
+        subprocess.run(scale_cmd, check=True)
         
-        # Split the scaled input into two streams
-        filter_complex.extend([
-            "[scaled_input]split=2[main][bg]",
-            
-            # Process background: scale and blur
-            f"[bg]scale={target_width}:{target_height},gblur=sigma=30[blurred]",
-            
-            # Process main video: scale and position
-            f"[main]scale={main_width}:{main_height}[scaled]",
-            f"[scaled]pad={target_width}:{target_height}:{x_pos}:{y_pos}[main_final]",
-            
-            # Overlay main video on background
-            "[blurred][main_final]overlay=format=yuv420p[v]"
-        ])
+        # Create blurred background
+        logger.info("Creating blurred background...")
+        blur_cmd = [
+            'ffmpeg', '-y',
+            '-i', scaled_file,
+            '-vf', f'scale={target_width}:{target_height},gblur=sigma=30',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-an',
+            blurred_file
+        ]
+        subprocess.run(blur_cmd, check=True)
         
         # Get source audio bitrate
         audio_bitrate = get_audio_bitrate(input_path) or "320k"
         
-        # Construct the full FFmpeg command
+        # Final composition
+        logger.info("Creating final composition...")
+        filter_complex = [
+            f"[1:v]scale={main_width}:{main_height}[main]",
+            f"[main]pad={target_width}:{target_height}:{x_pos}:{y_pos}[padded]",
+            "[0:v][padded]overlay=format=yuv420p[v]"
+        ]
+        
         ffmpeg_cmd = [
             'ffmpeg', '-y',
-            '-i', input_path,
+            '-i', blurred_file,
+            '-i', scaled_file,
             '-filter_complex', ';'.join(filter_complex),
             '-map', '[v]',
-            '-map', '0:a?',  # Map audio if present
+            '-map', '1:a?',
             '-c:v', 'libx264',
-            '-preset', 'veryfast',  # Balance between speed and quality
+            '-preset', 'veryfast',
             '-tune', 'fastdecode',
-            '-crf', '23',  # Balance between quality and size
-            '-threads', '0',  # Let FFmpeg choose optimal thread count
+            '-crf', '23',
+            '-threads', '0',
             '-c:a', 'aac',
             '-b:a', audio_bitrate,
             '-movflags', '+faststart',
-            '-pix_fmt', 'yuv420p',
             output_path
         ]
         
-        # Run FFmpeg command
-        logger.info("Starting FFmpeg processing")
+        logger.info("Starting final FFmpeg processing...")
         logger.info(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
         process = subprocess.Popen(
@@ -2967,6 +2984,14 @@ def process_vertical_video(input_path, output_path):
         logger.error(f"Error in process_vertical_video: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
+        
+    finally:
+        # Clean up temporary files
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.error(f"Error cleaning up temporary files: {str(e)}")
 
 def process_vertical_video_job(job_id, google_drive_link):
     """Background job to process a video into vertical format."""
