@@ -22,6 +22,7 @@ import math
 from PIL import Image
 import numpy as np
 from PIL import ImageFilter
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2810,10 +2811,38 @@ def blur_clip(clip, radius=30):
 
 def process_vertical_video(input_path, output_path):
     try:
-        # Get video dimensions using ffprobe
-        probe_cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {input_path}'
-        dimensions = subprocess.check_output(probe_cmd, shell=True).decode().strip().split(',')
-        width, height = map(int, dimensions)
+        # Get video dimensions using ffprobe with more reliable format
+        probe_cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height',
+            '-of', 'json',
+            input_path
+        ]
+        
+        # Use subprocess.run instead of check_output for better error handling
+        probe_process = subprocess.run(
+            probe_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        if probe_process.returncode != 0:
+            raise Exception(f"FFprobe failed: {probe_process.stderr}")
+            
+        probe_data = json.loads(probe_process.stdout)
+        if not probe_data.get('streams') or not probe_data['streams'][0]:
+            raise Exception("No video stream found in the input file")
+            
+        stream_data = probe_data['streams'][0]
+        width = int(stream_data.get('width', 0))
+        height = int(stream_data.get('height', 0))
+        
+        if width == 0 or height == 0:
+            raise Exception(f"Invalid video dimensions: {width}x{height}")
+            
         logger.info(f"Input video dimensions: {width}x{height}")
         
         # Calculate target dimensions for 9:16 aspect ratio
@@ -2864,10 +2893,10 @@ def process_vertical_video(input_path, output_path):
             '-map', '[v]',
             '-map', '0:a?',  # Map audio if present
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',  # Use fastest encoding preset
+            '-preset', 'veryfast',  # Balance between speed and quality
             '-tune', 'fastdecode',
             '-crf', '23',  # Balance between quality and size
-            '-threads', '16',  # Use all available CPU cores
+            '-threads', '0',  # Let FFmpeg choose optimal thread count
             '-c:a', 'aac',
             '-b:a', audio_bitrate,
             '-movflags', '+faststart',
@@ -2896,11 +2925,12 @@ def process_vertical_video(input_path, output_path):
             raise Exception("FFmpeg processing failed")
         
         logger.info("Video processing completed successfully")
+        return True
         
     except Exception as e:
         logger.error(f"Error in process_vertical_video: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        raise
+        return False
 
 def process_vertical_video_job(job_id, google_drive_link):
     """Background job to process a video into vertical format."""
