@@ -3587,6 +3587,62 @@ def cleanup_old_files():
     except Exception as e:
         logger.error(f"Error in cleanup_old_files: {str(e)}")
 
+def concatenate_clips(clips, output_file):
+    """Concatenate video clips with optimized compression settings."""
+    try:
+        final_clip = concatenate_videoclips(clips)
+        
+        # Get input resolution
+        original_width = final_clip.w
+        original_height = final_clip.h
+        
+        # Calculate target resolution (max 1080p while maintaining aspect ratio)
+        target_height = min(1080, original_height)
+        if original_height > target_height:
+            scale_factor = target_height / original_height
+            target_width = int(original_width * scale_factor)
+            # Ensure width is even (required by some codecs)
+            target_width = (target_width // 2) * 2
+        else:
+            target_width = original_width
+            target_height = original_height
+            
+        # Resize if necessary
+        if target_width != original_width or target_height != original_height:
+            final_clip = final_clip.resize((target_width, target_height))
+        
+        # Export with optimized compression settings
+        final_clip.write_videofile(
+            output_file,
+            codec='libx264',          # H.264 codec
+            bitrate='2000k',          # Reduced to 2Mbps
+            preset='slower',          # Better compression (takes longer but smaller file)
+            audio_codec='aac',        # AAC audio
+            audio_bitrate='128k',     # Reduced audio bitrate
+            fps=25,                   # Reduced to 25fps
+            threads=2,
+            logger=None,
+            ffmpeg_params=[
+                '-crf', '23',         # Constant Rate Factor (18-28 is good, higher = more compression)
+                '-profile:v', 'high', # High profile for better compression
+                '-level', '4.0',      # Compatibility level
+                '-movflags', '+faststart', # Enable streaming
+                '-maxrate', '2500k',  # Maximum bitrate
+                '-bufsize', '5000k',  # Buffer size for rate control
+            ]
+        )
+        
+        logger.info(f"Video exported at {target_width}x{target_height}, 25fps")
+        
+        # Verify the output
+        if not os.path.exists(output_file):
+            raise Exception("Failed to create output file")
+            
+        return True
+    except Exception as e:
+        logger.error(f"Error concatenating clips: {str(e)}")
+        return False
+
 if __name__ == '__main__':
     # Use gunicorn-compatible settings
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 3000))) 
