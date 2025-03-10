@@ -23,7 +23,6 @@ CORS(app)
 
 # Configure Flask
 app.config['PREFERRED_URL_SCHEME'] = 'https'
-app.config['SERVER_NAME'] = os.environ.get('SERVER_NAME', 'localhost:3000')
 
 # Directory to store processed videos
 VIDEO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videos")
@@ -193,9 +192,11 @@ def update_job_status(job_id, status, message=None, download_url=None, output_fi
 
 def get_download_url(filename):
     """Generate download URL without requiring request context."""
-    scheme = app.config['PREFERRED_URL_SCHEME']
-    server_name = app.config['SERVER_NAME']
-    return f"{scheme}://{server_name}/download/{filename}"
+    return f"https://chop.ytboost.top/download/{filename}"
+
+def get_status_url(job_id):
+    """Generate status URL without requiring request context."""
+    return f"https://chop.ytboost.top/job/{job_id}"
 
 @app.route('/process_video', methods=['POST'])
 @swag_from({
@@ -311,7 +312,7 @@ def process_video():
         thread.start()
         
         # Return initial response with status URL
-        status_url = get_download_url(f"job/{job_id}")
+        status_url = get_status_url(job_id)
         return jsonify({
             'job_id': job_id,
             'status': 'queued',
