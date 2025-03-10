@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Configure Flask to prefer HTTPS
+# Configure Flask
 app.config['PREFERRED_URL_SCHEME'] = 'https'
+app.config['SERVER_NAME'] = os.environ.get('SERVER_NAME', 'localhost:3000')
 
 # Directory to store processed videos
 VIDEO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videos")
@@ -190,6 +191,12 @@ def update_job_status(job_id, status, message=None, download_url=None, output_fi
         logger.error(f"Error updating job status: {str(e)}")
         return False
 
+def get_download_url(filename):
+    """Generate download URL without requiring request context."""
+    scheme = app.config['PREFERRED_URL_SCHEME']
+    server_name = app.config['SERVER_NAME']
+    return f"{scheme}://{server_name}/download/{filename}"
+
 @app.route('/process_video', methods=['POST'])
 @swag_from({
     'tags': ['Video Processing'],
@@ -264,50 +271,52 @@ def process_video():
         update_job_status(job_id, 'queued', 'Job queued for processing')
         
         def process():
-            with app.app_context():
-                try:
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        # Download video
-                        input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
-                        update_job_status(job_id, 'processing', 'Downloading video from YouTube')
-                        
-                        ydl_opts = {
-                            'format': 'best[ext=mp4]',
-                            'outtmpl': input_path,
-                            'quiet': True
-                        }
-                        
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            ydl.download([youtube_url])
-                        
-                        # Process video
-                        update_job_status(job_id, 'processing', 'Processing video segment')
-                        output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
-                        
-                        video = VideoFileClip(input_path)
-                        clip = video.subclip(start_time, end_time)
-                        clip.write_videofile(output_path)
-                        
-                        video.close()
-                        clip.close()
-                        
-                        # Update job status
-                        download_url = url_for('download_file', filename=f"{job_id}.mp4", _external=True)
-                        update_job_status(job_id, 'completed', 'Video processed successfully', 
-                                       download_url=download_url, output_file=f"{job_id}.mp4")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing job {job_id}: {str(e)}")
-                    update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Download video
+                    input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
+                    update_job_status(job_id, 'processing', 'Downloading video from YouTube')
+                    
+                    ydl_opts = {
+                        'format': 'best[ext=mp4]',
+                        'outtmpl': input_path,
+                        'quiet': True
+                    }
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([youtube_url])
+                    
+                    # Process video
+                    update_job_status(job_id, 'processing', 'Processing video segment')
+                    output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
+                    
+                    video = VideoFileClip(input_path)
+                    clip = video.subclip(start_time, end_time)
+                    clip.write_videofile(output_path)
+                    
+                    video.close()
+                    clip.close()
+                    
+                    # Update job status with download URL
+                    output_filename = f"{job_id}.mp4"
+                    download_url = get_download_url(output_filename)
+                    update_job_status(job_id, 'completed', 'Video processed successfully', 
+                                   download_url=download_url, output_file=output_filename)
+                    
+            except Exception as e:
+                logger.error(f"Error processing job {job_id}: {str(e)}")
+                update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
         
         thread = threading.Thread(target=process)
         thread.start()
         
+        # Return initial response with status URL
+        status_url = get_download_url(f"job/{job_id}")
         return jsonify({
             'job_id': job_id,
             'status': 'queued',
             'message': 'Job queued for processing',
-            'status_url': url_for('get_job_status', job_id=job_id, _external=True)
+            'status_url': status_url
         })
         
     except Exception as e:
