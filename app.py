@@ -743,47 +743,49 @@ def process_google_drive():
         
         # Start processing in a background thread
         def process():
-            try:
-                # Create temporary directory for processing
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    # Download the video
-                    input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
-                    update_job_status(job_id, 'processing', 'Downloading video from Google Drive')
-                    download_from_google_drive(data['google_drive_link'], input_path)
-                    
-                    # Process the video
-                    update_job_status(job_id, 'processing', 'Processing video segments')
-                    output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
-                    
-                    # Load the video
-                    video = VideoFileClip(input_path)
-                    
-                    # Extract clips based on timestamps
-                    clips = []
-                    for start, end in data['timestamps']:
-                        clip = video.subclip(start, end)
-                        clips.append(clip)
-                    
-                    # Concatenate clips
-                    final_clip = concatenate_videoclips(clips)
-                    
-                    # Write the output file
-                    final_clip.write_videofile(output_path)
-                    
-                    # Clean up
-                    video.close()
-                    for clip in clips:
-                        clip.close()
-                    final_clip.close()
-                    
-                    # Update job status with download URL
-                    download_url = url_for('download_file', filename=f"{job_id}.mp4", _external=True)
-                    update_job_status(job_id, 'completed', 'Video processed successfully', 
-                                   download_url=download_url, output_file=f"{job_id}.mp4")
-                    
-            except Exception as e:
-                logger.error(f"Error processing job {job_id}: {str(e)}")
-                update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
+            # Create application context for the background thread
+            with app.app_context():
+                try:
+                    # Create temporary directory for processing
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        # Download the video
+                        input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
+                        update_job_status(job_id, 'processing', 'Downloading video from Google Drive')
+                        download_from_google_drive(data['google_drive_link'], input_path)
+                        
+                        # Process the video
+                        update_job_status(job_id, 'processing', 'Processing video segments')
+                        output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
+                        
+                        # Load the video
+                        video = VideoFileClip(input_path)
+                        
+                        # Extract clips based on timestamps
+                        clips = []
+                        for start, end in data['timestamps']:
+                            clip = video.subclip(start, end)
+                            clips.append(clip)
+                        
+                        # Concatenate clips
+                        final_clip = concatenate_videoclips(clips)
+                        
+                        # Write the output file
+                        final_clip.write_videofile(output_path)
+                        
+                        # Clean up
+                        video.close()
+                        for clip in clips:
+                            clip.close()
+                        final_clip.close()
+                        
+                        # Update job status with download URL
+                        download_url = url_for('download_file', filename=f"{job_id}.mp4", _external=True)
+                        update_job_status(job_id, 'completed', 'Video processed successfully', 
+                                       download_url=download_url, output_file=f"{job_id}.mp4")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing job {job_id}: {str(e)}")
+                    update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
                 
         # Start the processing thread
         thread = threading.Thread(target=process)
@@ -862,47 +864,49 @@ def process_youtube():
         
         # Start processing in a background thread
         def process():
-            try:
-                # Create temporary directory for processing
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    # Download the video
-                    input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
-                    update_job_status(job_id, 'processing', 'Downloading video from YouTube')
-                    browser_download_youtube(data['youtube_url'], input_path)
-                    
-                    # Process the video
-                    update_job_status(job_id, 'processing', 'Processing video segments')
-                    output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
-                    
-                    # Load the video
-                    video = VideoFileClip(input_path)
-                    
-                    # Extract clips based on timestamps
-                    clips = []
-                    for start, end in data['timestamps']:
-                        clip = video.subclip(start, end)
-                        clips.append(clip)
-                    
-                    # Concatenate clips
-                    final_clip = concatenate_videoclips(clips)
-                    
-                    # Write the output file
-                    final_clip.write_videofile(output_path)
-                    
-                    # Clean up
-                    video.close()
-                    for clip in clips:
-                        clip.close()
-                    final_clip.close()
-                    
-                    # Update job status with download URL
-                    download_url = url_for('download_file', filename=f"{job_id}.mp4", _external=True)
-                    update_job_status(job_id, 'completed', 'Video processed successfully', 
-                                   download_url=download_url, output_file=f"{job_id}.mp4")
-                    
-            except Exception as e:
-                logger.error(f"Error processing job {job_id}: {str(e)}")
-                update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
+            # Create application context for the background thread
+            with app.app_context():
+                try:
+                    # Create temporary directory for processing
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        # Download the video
+                        input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
+                        update_job_status(job_id, 'processing', 'Downloading video from YouTube')
+                        browser_download_youtube(data['youtube_url'], input_path)
+                        
+                        # Process the video
+                        update_job_status(job_id, 'processing', 'Processing video segments')
+                        output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
+                        
+                        # Load the video
+                        video = VideoFileClip(input_path)
+                        
+                        # Extract clips based on timestamps
+                        clips = []
+                        for start, end in data['timestamps']:
+                            clip = video.subclip(start, end)
+                            clips.append(clip)
+                        
+                        # Concatenate clips
+                        final_clip = concatenate_videoclips(clips)
+                        
+                        # Write the output file
+                        final_clip.write_videofile(output_path)
+                        
+                        # Clean up
+                        video.close()
+                        for clip in clips:
+                            clip.close()
+                        final_clip.close()
+                        
+                        # Update job status with download URL
+                        download_url = url_for('download_file', filename=f"{job_id}.mp4", _external=True)
+                        update_job_status(job_id, 'completed', 'Video processed successfully', 
+                                       download_url=download_url, output_file=f"{job_id}.mp4")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing job {job_id}: {str(e)}")
+                    update_job_status(job_id, 'failed', f"Processing failed: {str(e)}")
                 
         # Start the processing thread
         thread = threading.Thread(target=process)
