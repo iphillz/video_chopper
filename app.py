@@ -18,11 +18,15 @@ import fcntl
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Get domain from environment or use default
+DOMAIN = os.environ.get('DOMAIN', 'localhost:3000')
+SCHEME = os.environ.get('SCHEME', 'http')
+
 app = Flask(__name__)
 CORS(app)
 
 # Configure Flask
-app.config['PREFERRED_URL_SCHEME'] = 'https'
+app.config['PREFERRED_URL_SCHEME'] = SCHEME
 
 # Directory to store processed videos
 VIDEO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "videos")
@@ -41,15 +45,24 @@ swagger_config = {
     ],
     "static_url_path": "/flasgger_static",
     "swagger_ui": True,
-    "specs_route": "/docs"
+    "specs_route": "/docs",
+    "schemes": [SCHEME]
 }
 
 swagger_template = {
+    "swagger": "2.0",
     "info": {
         "title": "Video Chopper API",
         "description": "API for processing YouTube videos with timestamp-based chopping",
-        "version": "2.0.0"
+        "version": "2.0.0",
+        "contact": {
+            "name": "API Support",
+            "url": f"{SCHEME}://{DOMAIN}/docs"
+        }
     },
+    "host": DOMAIN,
+    "basePath": "/",
+    "schemes": [SCHEME],
     "tags": [
         {
             "name": "Video Processing",
@@ -192,11 +205,11 @@ def update_job_status(job_id, status, message=None, download_url=None, output_fi
 
 def get_download_url(filename):
     """Generate download URL without requiring request context."""
-    return f"https://chop.ytboost.top/download/{filename}"
+    return f"{SCHEME}://{DOMAIN}/download/{filename}"
 
 def get_status_url(job_id):
     """Generate status URL without requiring request context."""
-    return f"https://chop.ytboost.top/job/{job_id}"
+    return f"{SCHEME}://{DOMAIN}/job/{job_id}"
 
 @app.route('/process_video', methods=['POST'])
 @swag_from({
