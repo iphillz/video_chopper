@@ -600,3 +600,35 @@ def browser_download_youtube(url, destination, use_undetected=True):
                 
                 # Initialize browser with more detailed error handling
                 logger.info("BROWSER METHOD: Initializing undetected Chrome browser")
+                browser = uc.Chrome(options=chrome_options)
+            except Exception as e:
+                logger.error(f"BROWSER METHOD: Failed to initialize Chrome browser: {str(e)}")
+                raise
+            
+            # Use the browser to download the video
+            try:
+                browser.get(url)
+                time.sleep(10)  # Wait for the page to load
+                browser.save_screenshot(os.path.join(logs_dir, f'browser_screenshot_{video_id}.png'))
+                logger.info(f"BROWSER METHOD: Screenshot saved to {os.path.join(logs_dir, f'browser_screenshot_{video_id}.png')}")
+                
+                # Extract video URL from the page
+                video_url = browser.current_url
+                logger.info(f"BROWSER METHOD: Extracted video URL: {video_url}")
+                
+                # Download the video
+                download_from_google_drive(video_url, destination)
+            except Exception as e:
+                logger.error(f"BROWSER METHOD: Error downloading video: {str(e)}")
+                raise
+            
+            # Clean up
+            browser.quit()
+            
+            return destination
+        else:
+            logger.error("BROWSER METHOD: Undetected ChromeDriver not available")
+            return None
+    except Exception as e:
+        logger.error(f"BROWSER METHOD: Error downloading video: {str(e)}")
+        raise
