@@ -274,13 +274,14 @@ def process_video():
         def process():
             try:
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    # Download video
+                    # Download video with best quality
                     input_path = os.path.join(temp_dir, f"input_{job_id}.mp4")
                     update_job_status(job_id, 'processing', 'Downloading video from YouTube')
                     
                     ydl_opts = {
-                        'format': 'best[ext=mp4]',
+                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                         'outtmpl': input_path,
+                        'merge_output_format': 'mp4',
                         'quiet': True
                     }
                     
@@ -291,10 +292,37 @@ def process_video():
                     update_job_status(job_id, 'processing', 'Processing video segment')
                     output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp4")
                     
+                    # Load video with audio
                     video = VideoFileClip(input_path)
-                    clip = video.subclip(start_time, end_time)
-                    clip.write_videofile(output_path)
                     
+                    # Get original video properties
+                    original_fps = video.fps
+                    original_audio = video.audio
+                    
+                    # Create subclip with audio
+                    clip = video.subclip(start_time, end_time)
+                    
+                    # Ensure audio is copied
+                    if original_audio is not None:
+                        clip = clip.set_audio(clip.audio)
+                    
+                    # Write video with original quality settings
+                    clip.write_videofile(
+                        output_path,
+                        fps=original_fps,  # Maintain original FPS
+                        codec='libx264',   # Use H.264 codec
+                        audio_codec='aac', # Use AAC for audio
+                        preset='slow',     # Better quality compression
+                        bitrate=None,      # Maintain source bitrate
+                        audio=True,        # Ensure audio is included
+                        threads=2,         # Use multiple threads
+                        ffmpeg_params=[    # Maintain quality
+                            '-crf', '17',  # High quality (0-51, lower is better)
+                            '-pix_fmt', 'yuv420p'  # Standard pixel format
+                        ]
+                    )
+                    
+                    # Clean up
                     video.close()
                     clip.close()
                     
