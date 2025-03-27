@@ -13,6 +13,7 @@ import yt_dlp
 from flasgger import Swagger, swag_from
 import json
 import fcntl
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
