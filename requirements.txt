@@ -1,0 +1,13 @@
+Flask==2.0.3
+flasgger==0.9.5
+flask-cors==3.0.10
+yt-dlp==2024.3.10
+moviepy==1.0.3
+gunicorn==21.2.0
+requests==2.31.0
+Werkzeug==2.0.3
+pytube==15.0.0
+youtube-dl==2021.12.17 # Optional fallback
+selenium
+undetected-chromedriver
+webdriver_manager 
