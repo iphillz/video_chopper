@@ -219,7 +219,7 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
     try:
         # Configure yt-dlp with better options
         ydl_opts = {
-            'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',  # Changed format selection
+            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',  # More reliable format selection
             'merge_output_format': 'mp4',
             'outtmpl': os.path.join(VIDEO_DIR, f"temp_{job_id}.%(ext)s"),
             'quiet': True,
@@ -230,6 +230,10 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
             'no_color': True,
             # Add cookies for better access
             'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
+            # Add more options to handle signature extraction issues
+            'extractor_retries': 5,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
         }
         
         logger.info(f"Starting download for job {job_id}")
@@ -377,48 +381,38 @@ def process_video():
       400:
         description: Bad request
     """
+    app.logger.info('Received request data: %s', request.form)
     try:
-        youtube_url = request.form.get('youtube_url') or request.values.get('youtube_url')
-        input_timestamp = request.form.get('input_timestamp') or request.values.get('input_timestamp', '00:00:00')
-        output_timestamp = request.form.get('output_timestamp') or request.values.get('output_timestamp', '00:00:10')
-
-    if not youtube_url:
-        return jsonify({'error': 'YouTube URL is required'}), 400
-
-        # Validate YouTube URL
-        if 'youtube.com' not in youtube_url and 'youtu.be' not in youtube_url:
-            return jsonify({'error': 'Invalid YouTube URL'}), 400
-
-        # Generate job ID and create job
+        youtube_url = request.form['youtube_url']
+        input_timestamp = request.form['input_timestamp']
+        output_timestamp = request.form['output_timestamp']
+        
+        # Generate a unique job ID
         job_id = str(uuid.uuid4())
-        jobs = load_jobs()
-        jobs[job_id] = {
-            'status': 'processing',
-            'created_at': datetime.now().isoformat(),
-            'youtube_url': youtube_url,
-            'input_timestamp': input_timestamp,
-            'output_timestamp': output_timestamp
-        }
-        save_jobs()
-
-        # Start processing in background
-        thread = threading.Thread(
+        
+        # Initialize job
+        update_job_status(job_id, 'queued', 'Job created successfully')
+        
+        # Start processing in a separate thread
+        threading.Thread(
             target=process_video_task,
-            args=(job_id, youtube_url, input_timestamp, output_timestamp)
-        )
-        thread.daemon = True
-        thread.start()
-
+            args=(job_id, youtube_url, input_timestamp, output_timestamp),
+            daemon=True
+        ).start()
+        
         return jsonify({
             'job_id': job_id,
-            'status': 'processing',
-            'message': 'Video processing started',
+            'status': 'queued',
+            'message': 'Job created successfully',
             'check_status_url': get_status_url(job_id)
-        })
-
+        }), 200
+        
     except Exception as e:
-        logger.error(f"Error creating job: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        app.logger.error('Error processing request: %s', str(e))
+        return jsonify({
+            'error': str(e),
+            'message': 'Invalid request parameters'
+        }), 400
 
 @app.route('/job/<job_id>', methods=['GET'])
 @swag_from({
@@ -463,5 +457,285 @@ def download_file(filename):
 def health_check():
     return jsonify({"status": "healthy"})
 
+# New function for downloading 1080p videos
+def download_1080p_task(job_id, youtube_url):
+    jobs = load_jobs()
+    output_path = os.path.join(VIDEO_DIR, f"{job_id}_1080p.mp4")
+    
+    try:
+        # Configure yt-dlp with options for 1080p
+        ydl_opts = {
+            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+            'merge_output_format': 'mp4',
+            'outtmpl': output_path,
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'extractor_retries': 5,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
+        }
+        
+        logger.info(f"Starting 1080p download for job {job_id}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # First get video info to check availability
+            try:
+                video_info = ydl.extract_info(youtube_url, download=False)
+                logger.info(f"Video info extracted successfully for {youtube_url}")
+            except Exception as e:
+                logger.error(f"Failed to extract video info: {str(e)}")
+                raise
+            
+            # Download the video
+            ydl.download([youtube_url])
+        
+        # Update job status
+        jobs[job_id].update({
+            'status': 'completed',
+            'download_url': get_download_url(f"{job_id}_1080p.mp4"),
+            'message': '1080p video downloaded successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing 1080p download job {job_id}: {str(e)}")
+        jobs[job_id].update({
+            'status': 'failed',
+            'error': str(e),
+            'message': 'Failed to download 1080p video'
+        })
+    
+    finally:
+        save_jobs()
+        logger.info(f"1080p download job {job_id} completed with status: {jobs[job_id]['status']}")
+
+# New function for downloading MP3 audio
+def download_mp3_task(job_id, youtube_url):
+    jobs = load_jobs()
+    output_path = os.path.join(VIDEO_DIR, f"{job_id}.mp3")
+    
+    try:
+        # Configure yt-dlp with options for MP3
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': os.path.join(VIDEO_DIR, f"{job_id}"),
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'extractor_retries': 5,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
+        }
+        
+        logger.info(f"Starting MP3 download for job {job_id}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # First get video info to check availability
+            try:
+                video_info = ydl.extract_info(youtube_url, download=False)
+                logger.info(f"Video info extracted successfully for {youtube_url}")
+            except Exception as e:
+                logger.error(f"Failed to extract video info: {str(e)}")
+                raise
+            
+            # Download the audio
+            ydl.download([youtube_url])
+        
+        # Update job status
+        jobs[job_id].update({
+            'status': 'completed',
+            'download_url': get_download_url(f"{job_id}.mp3"),
+            'message': 'MP3 audio downloaded successfully'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing MP3 download job {job_id}: {str(e)}")
+        jobs[job_id].update({
+            'status': 'failed',
+            'error': str(e),
+            'message': 'Failed to download MP3 audio'
+        })
+    
+    finally:
+        save_jobs()
+        logger.info(f"MP3 download job {job_id} completed with status: {jobs[job_id]['status']}")
+
+@app.route('/download_1080p', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Download YouTube video in 1080p',
+    'description': 'Download a YouTube video in 1080p resolution',
+    'parameters': [
+        {
+            'name': 'youtube_url',
+            'in': 'formData',
+            'type': 'string',
+            'required': True,
+            'description': 'YouTube video URL'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Job created successfully',
+            'schema': {'$ref': '#/definitions/JobResponse'}
+        },
+        '400': {
+            'description': 'Invalid request parameters'
+        }
+    }
+})
+def download_1080p():
+    """
+    Download YouTube video in 1080p
+    ---
+    tags:
+      - Video Processing
+    consumes:
+      - application/x-www-form-urlencoded
+      - multipart/form-data
+    parameters:
+      - name: youtube_url
+        in: formData
+        type: string
+        required: true
+        description: YouTube video URL
+    responses:
+      200:
+        description: Job created successfully
+        schema:
+          type: object
+          properties:
+            job_id:
+              type: string
+            status:
+              type: string
+            message:
+              type: string
+            check_status_url:
+              type: string
+      400:
+        description: Bad request
+    """
+    app.logger.info('Received 1080p download request: %s', request.form)
+    try:
+        youtube_url = request.form['youtube_url']
+        
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job
+        update_job_status(job_id, 'queued', 'Job created successfully')
+        
+        # Start processing in a separate thread
+        threading.Thread(
+            target=download_1080p_task,
+            args=(job_id, youtube_url),
+            daemon=True
+        ).start()
+        
+        return jsonify({
+            'job_id': job_id,
+            'status': 'queued',
+            'message': 'Job created successfully',
+            'check_status_url': get_status_url(job_id)
+        }), 200
+        
+    except Exception as e:
+        app.logger.error('Error processing 1080p download request: %s', str(e))
+        return jsonify({
+            'error': str(e),
+            'message': 'Invalid request parameters'
+        }), 400
+
+@app.route('/download_mp3', methods=['POST'])
+@swag_from({
+    'tags': ['Video Processing'],
+    'summary': 'Download YouTube audio as MP3',
+    'description': 'Extract and download audio from a YouTube video as MP3',
+    'parameters': [
+        {
+            'name': 'youtube_url',
+            'in': 'formData',
+            'type': 'string',
+            'required': True,
+            'description': 'YouTube video URL'
+        }
+    ],
+    'responses': {
+        '200': {
+            'description': 'Job created successfully',
+            'schema': {'$ref': '#/definitions/JobResponse'}
+        },
+        '400': {
+            'description': 'Invalid request parameters'
+        }
+    }
+})
+def download_mp3():
+    """
+    Download YouTube audio as MP3
+    ---
+    tags:
+      - Video Processing
+    consumes:
+      - application/x-www-form-urlencoded
+      - multipart/form-data
+    parameters:
+      - name: youtube_url
+        in: formData
+        type: string
+        required: true
+        description: YouTube video URL
+    responses:
+      200:
+        description: Job created successfully
+        schema:
+          type: object
+          properties:
+            job_id:
+              type: string
+            status:
+              type: string
+            message:
+              type: string
+            check_status_url:
+              type: string
+      400:
+        description: Bad request
+    """
+    app.logger.info('Received MP3 download request: %s', request.form)
+    try:
+        youtube_url = request.form['youtube_url']
+        
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job
+        update_job_status(job_id, 'queued', 'Job created successfully')
+        
+        # Start processing in a separate thread
+        threading.Thread(
+            target=download_mp3_task,
+            args=(job_id, youtube_url),
+            daemon=True
+        ).start()
+        
+        return jsonify({
+            'job_id': job_id,
+            'status': 'queued',
+            'message': 'Job created successfully',
+            'check_status_url': get_status_url(job_id)
+        }), 200
+        
+    except Exception as e:
+        app.logger.error('Error processing MP3 download request: %s', str(e))
+        return jsonify({
+            'error': str(e),
+            'message': 'Invalid request parameters'
+        }), 400
+
 # Load jobs at startup
-jobs = load_jobs() 
+jobs = load_jobs()
