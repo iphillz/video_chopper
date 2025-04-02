@@ -228,9 +228,6 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
             'nocheckcertificate': True,
             'ignoreerrors': False,
             'no_color': True,
-            # Add cookies for better access
-            'cookiefile': 'cookies.txt',  # Use cookies file if available
-            'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             # Add more options to handle signature extraction issues
             'extractor_retries': 5,
             'fragment_retries': 5,
@@ -355,18 +352,26 @@ def process_video():
       - name: youtube_url
         in: formData
         type: string
-        required: true
-        description: YouTube video URL
+        required: false
+        description: YouTube video URL (defaults to test video if not provided)
+        default: https://www.youtube.com/watch?v=sEFARrqZ9y8
       - name: input_timestamp
         in: formData
         type: string
-        required: true
+        required: false
         description: Start timestamp (HH:MM:SS.mmm)
+        default: 00:00:10.000
       - name: output_timestamp
         in: formData
         type: string
-        required: true
+        required: false
         description: End timestamp (HH:MM:SS.mmm)
+        default: 00:00:20.000
+      - name: timestamp_preset
+        in: formData
+        type: integer
+        required: false
+        description: Preset timestamp index (0-3, overrides input/output timestamps if provided)
     responses:
       200:
         description: Job created successfully
@@ -386,9 +391,27 @@ def process_video():
     """
     app.logger.info('Received request data: %s', request.form)
     try:
-        youtube_url = request.form['youtube_url']
-        input_timestamp = request.form['input_timestamp']
-        output_timestamp = request.form['output_timestamp']
+        # Use default test video URL if not provided
+        youtube_url = request.form.get('youtube_url', TEST_VIDEO['url'])
+        
+        # Check if timestamp preset is provided
+        timestamp_preset = request.form.get('timestamp_preset')
+        
+        if timestamp_preset is not None:
+            try:
+                preset_index = int(timestamp_preset)
+                if 0 <= preset_index < len(TEST_TIMESTAMPS):
+                    input_timestamp = TEST_TIMESTAMPS[preset_index]['start']
+                    output_timestamp = TEST_TIMESTAMPS[preset_index]['end']
+                else:
+                    input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
+                    output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
+            except ValueError:
+                input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
+                output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
+        else:
+            input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
+            output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
         
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -465,25 +488,20 @@ def health_check():
     return jsonify({"status": "healthy"})
 
 # Test URLs and timestamps for examples
-TEST_VIDEOS = [
-    {
-        "name": "Big Buck Bunny (Creative Commons)",
-        "url": "https://www.youtube.com/watch?v=YE7VzlLtp-4",
-        "start_timestamp": "00:00:10.000",
-        "end_timestamp": "00:00:20.000"
-    },
-    {
-        "name": "Sintel Trailer (Creative Commons)",
-        "url": "https://www.youtube.com/watch?v=eRsGyueVLvQ",
-        "start_timestamp": "00:00:05.000",
-        "end_timestamp": "00:00:15.000"
-    },
-    {
-        "name": "Tears of Steel (Creative Commons)",
-        "url": "https://www.youtube.com/watch?v=R6MlUcmOul8",
-        "start_timestamp": "00:00:30.000",
-        "end_timestamp": "00:00:40.000"
-    }
+# Test URL and timestamps for examples
+TEST_VIDEO = {
+    "name": "Test Video",
+    "url": "https://www.youtube.com/watch?v=sEFARrqZ9y8",
+    "start_timestamp": "00:00:10.000",
+    "end_timestamp": "00:00:20.000"
+}
+
+# Additional timestamp options for testing
+TEST_TIMESTAMPS = [
+    {"start": "00:00:05.000", "end": "00:00:15.000"},
+    {"start": "00:00:30.000", "end": "00:00:40.000"},
+    {"start": "00:01:00.000", "end": "00:01:30.000"},
+    {"start": "00:02:00.000", "end": "00:02:30.000"}
 ]
 
 # New function for downloading 1080p videos
@@ -500,8 +518,6 @@ def download_1080p_task(job_id, youtube_url):
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
-            'cookiefile': 'cookies.txt',  # Use cookies file if available
-            'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             'extractor_retries': 5,
             'fragment_retries': 5,
             'skip_unavailable_fragments': True,
@@ -559,8 +575,6 @@ def download_mp3_task(job_id, youtube_url):
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
-            'cookiefile': 'cookies.txt',  # Use cookies file if available
-            'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             'extractor_retries': 5,
             'fragment_retries': 5,
             'skip_unavailable_fragments': True,
@@ -637,8 +651,9 @@ def download_1080p():
       - name: youtube_url
         in: formData
         type: string
-        required: true
-        description: YouTube video URL
+        required: false
+        description: YouTube video URL (defaults to test video if not provided)
+        default: https://www.youtube.com/watch?v=sEFARrqZ9y8
     responses:
       200:
         description: Job created successfully
@@ -658,7 +673,7 @@ def download_1080p():
     """
     app.logger.info('Received 1080p download request: %s', request.form)
     try:
-        youtube_url = request.form['youtube_url']
+        youtube_url = request.form.get('youtube_url', TEST_VIDEO['url'])
         
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -728,8 +743,9 @@ def download_mp3():
       - name: youtube_url
         in: formData
         type: string
-        required: true
-        description: YouTube video URL
+        required: false
+        description: YouTube video URL (defaults to test video if not provided)
+        default: https://www.youtube.com/watch?v=sEFARrqZ9y8
     responses:
       200:
         description: Job created successfully
@@ -749,7 +765,7 @@ def download_mp3():
     """
     app.logger.info('Received MP3 download request: %s', request.form)
     try:
-        youtube_url = request.form['youtube_url']
+        youtube_url = request.form.get('youtube_url', TEST_VIDEO['url'])
         
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -781,31 +797,7 @@ def download_mp3():
             'error': str(e),
             'message': 'Invalid request parameters'
         }), 400
-@app.route('/test_videos', methods=['GET'])
-def get_test_videos():
-    """
-    Get test videos with sample URLs and timestamps
-    ---
-    tags:
-      - Video Processing
-    responses:
-      200:
-        description: List of test videos
-        schema:
-          type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-              url:
-                type: string
-              start_timestamp:
-                type: string
-              end_timestamp:
-                type: string
-    """
-    return jsonify(TEST_VIDEOS)
+# Removed test_videos endpoint as requested
 
 @app.route('/direct_download', methods=['GET'])
 def direct_download():
@@ -832,12 +824,9 @@ def direct_download():
         description: Bad request
     """
     try:
-        url = request.args.get('url')
+        url = request.args.get('url', TEST_VIDEO['url'])
         format_type = request.args.get('format', 'mp4')
         
-        if not url:
-            return jsonify({"error": "URL parameter is required"}), 400
-            
         if format_type not in ['mp3', 'mp4']:
             return jsonify({"error": "Format must be mp3 or mp4"}), 400
             
