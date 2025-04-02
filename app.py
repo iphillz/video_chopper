@@ -229,11 +229,14 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
             'ignoreerrors': False,
             'no_color': True,
             # Add cookies for better access
+            'cookiefile': 'cookies.txt',  # Use cookies file if available
             'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             # Add more options to handle signature extraction issues
             'extractor_retries': 5,
             'fragment_retries': 5,
             'skip_unavailable_fragments': True,
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
         }
         
         logger.info(f"Starting download for job {job_id}")
@@ -319,14 +322,14 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
             'in': 'formData',
             'type': 'string',
             'required': True,
-            'description': 'Input timestamp (HH:MM:SS)'
+            'description': 'Input timestamp (HH:MM:SS.mmm)'
         },
         {
             'name': 'output_timestamp',
             'in': 'formData',
             'type': 'string',
             'required': True,
-            'description': 'Output timestamp (HH:MM:SS)'
+            'description': 'Output timestamp (HH:MM:SS.mmm)'
         }
     ],
     'responses': {
@@ -358,12 +361,12 @@ def process_video():
         in: formData
         type: string
         required: true
-        description: Start timestamp (HH:MM:SS)
+        description: Start timestamp (HH:MM:SS.mmm)
       - name: output_timestamp
         in: formData
         type: string
         required: true
-        description: End timestamp (HH:MM:SS)
+        description: End timestamp (HH:MM:SS.mmm)
     responses:
       200:
         description: Job created successfully
@@ -400,11 +403,15 @@ def process_video():
             daemon=True
         ).start()
         
+        # Prepare response with direct download URL
+        download_url = get_download_url(f"{job_id}.mp4")
+        
         return jsonify({
             'job_id': job_id,
             'status': 'queued',
             'message': 'Job created successfully',
-            'check_status_url': get_status_url(job_id)
+            'check_status_url': get_status_url(job_id),
+            'download_url': download_url
         }), 200
         
     except Exception as e:
@@ -457,6 +464,28 @@ def download_file(filename):
 def health_check():
     return jsonify({"status": "healthy"})
 
+# Test URLs and timestamps for examples
+TEST_VIDEOS = [
+    {
+        "name": "Big Buck Bunny (Creative Commons)",
+        "url": "https://www.youtube.com/watch?v=YE7VzlLtp-4",
+        "start_timestamp": "00:00:10.000",
+        "end_timestamp": "00:00:20.000"
+    },
+    {
+        "name": "Sintel Trailer (Creative Commons)",
+        "url": "https://www.youtube.com/watch?v=eRsGyueVLvQ",
+        "start_timestamp": "00:00:05.000",
+        "end_timestamp": "00:00:15.000"
+    },
+    {
+        "name": "Tears of Steel (Creative Commons)",
+        "url": "https://www.youtube.com/watch?v=R6MlUcmOul8",
+        "start_timestamp": "00:00:30.000",
+        "end_timestamp": "00:00:40.000"
+    }
+]
+
 # New function for downloading 1080p videos
 def download_1080p_task(job_id, youtube_url):
     jobs = load_jobs()
@@ -471,9 +500,13 @@ def download_1080p_task(job_id, youtube_url):
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
+            'cookiefile': 'cookies.txt',  # Use cookies file if available
+            'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             'extractor_retries': 5,
             'fragment_retries': 5,
             'skip_unavailable_fragments': True,
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
         }
         
         logger.info(f"Starting 1080p download for job {job_id}")
@@ -526,9 +559,13 @@ def download_mp3_task(job_id, youtube_url):
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
+            'cookiefile': 'cookies.txt',  # Use cookies file if available
+            'cookiesfrombrowser': ('chrome',),  # This will use Chrome cookies if available
             'extractor_retries': 5,
             'fragment_retries': 5,
             'skip_unavailable_fragments': True,
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
         }
         
         logger.info(f"Starting MP3 download for job {job_id}")
@@ -636,11 +673,15 @@ def download_1080p():
             daemon=True
         ).start()
         
+        # Prepare response with direct download URL
+        download_url = get_download_url(f"{job_id}_1080p.mp4")
+        
         return jsonify({
             'job_id': job_id,
             'status': 'queued',
             'message': 'Job created successfully',
-            'check_status_url': get_status_url(job_id)
+            'check_status_url': get_status_url(job_id),
+            'download_url': download_url
         }), 200
         
     except Exception as e:
@@ -723,11 +764,15 @@ def download_mp3():
             daemon=True
         ).start()
         
+        # Prepare response with direct download URL
+        download_url = get_download_url(f"{job_id}.mp3")
+        
         return jsonify({
             'job_id': job_id,
             'status': 'queued',
             'message': 'Job created successfully',
-            'check_status_url': get_status_url(job_id)
+            'check_status_url': get_status_url(job_id),
+            'download_url': download_url
         }), 200
         
     except Exception as e:
@@ -736,6 +781,108 @@ def download_mp3():
             'error': str(e),
             'message': 'Invalid request parameters'
         }), 400
+@app.route('/test_videos', methods=['GET'])
+def get_test_videos():
+    """
+    Get test videos with sample URLs and timestamps
+    ---
+    tags:
+      - Video Processing
+    responses:
+      200:
+        description: List of test videos
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              url:
+                type: string
+              start_timestamp:
+                type: string
+              end_timestamp:
+                type: string
+    """
+    return jsonify(TEST_VIDEOS)
+
+@app.route('/direct_download', methods=['GET'])
+def direct_download():
+    """
+    Direct download endpoint for MP3 or MP4 files
+    ---
+    tags:
+      - Video Processing
+    parameters:
+      - name: url
+        in: query
+        type: string
+        required: true
+        description: YouTube video URL
+      - name: format
+        in: query
+        type: string
+        required: true
+        description: Format to download (mp3 or mp4)
+    responses:
+      200:
+        description: File download
+      400:
+        description: Bad request
+    """
+    try:
+        url = request.args.get('url')
+        format_type = request.args.get('format', 'mp4')
+        
+        if not url:
+            return jsonify({"error": "URL parameter is required"}), 400
+            
+        if format_type not in ['mp3', 'mp4']:
+            return jsonify({"error": "Format must be mp3 or mp4"}), 400
+            
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job
+        update_job_status(job_id, 'queued', 'Job created successfully')
+        
+        if format_type == 'mp3':
+            # Start MP3 download in a separate thread
+            threading.Thread(
+                target=download_mp3_task,
+                args=(job_id, url),
+                daemon=True
+            ).start()
+        else:
+            # Start 1080p download in a separate thread
+            threading.Thread(
+                target=download_1080p_task,
+                args=(job_id, url),
+                daemon=True
+            ).start()
+        
+        # Return the direct download URL
+        if format_type == 'mp3':
+            download_url = get_download_url(f"{job_id}.mp3")
+        else:
+            download_url = get_download_url(f"{job_id}_1080p.mp4")
+            
+        return jsonify({
+            'job_id': job_id,
+            'status': 'queued',
+            'message': 'Job created successfully',
+            'check_status_url': get_status_url(job_id),
+            'download_url': download_url
+        }), 200
+        
+    except Exception as e:
+        app.logger.error('Error processing direct download request: %s', str(e))
+        return jsonify({
+            'error': str(e),
+            'message': 'Invalid request parameters'
+        }), 400
 
 # Load jobs at startup
+jobs = load_jobs()
 jobs = load_jobs()
