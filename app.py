@@ -219,7 +219,7 @@ def process_video_task(job_id, youtube_url, start_time, end_time):
     try:
         # Configure yt-dlp with better options
         ydl_opts = {
-            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',  # More reliable format selection
+            'format': 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4] / bv*+ba/b',  # More reliable format selection
             'merge_output_format': 'mp4',
             'outtmpl': os.path.join(VIDEO_DIR, f"temp_{job_id}.%(ext)s"),
             'quiet': True,
@@ -367,11 +367,6 @@ def process_video():
         required: false
         description: End timestamp (HH:MM:SS.mmm)
         default: 00:00:20.000
-      - name: timestamp_preset
-        in: formData
-        type: integer
-        required: false
-        description: Preset timestamp index (0-3, overrides input/output timestamps if provided)
     responses:
       200:
         description: Job created successfully
@@ -394,24 +389,9 @@ def process_video():
         # Use default test video URL if not provided
         youtube_url = request.form.get('youtube_url', TEST_VIDEO['url'])
         
-        # Check if timestamp preset is provided
-        timestamp_preset = request.form.get('timestamp_preset')
-        
-        if timestamp_preset is not None:
-            try:
-                preset_index = int(timestamp_preset)
-                if 0 <= preset_index < len(TEST_TIMESTAMPS):
-                    input_timestamp = TEST_TIMESTAMPS[preset_index]['start']
-                    output_timestamp = TEST_TIMESTAMPS[preset_index]['end']
-                else:
-                    input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
-                    output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
-            except ValueError:
-                input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
-                output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
-        else:
-            input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
-            output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
+        # Use default timestamps if not provided
+        input_timestamp = request.form.get('input_timestamp', TEST_VIDEO['start_timestamp'])
+        output_timestamp = request.form.get('output_timestamp', TEST_VIDEO['end_timestamp'])
         
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -496,12 +476,12 @@ TEST_VIDEO = {
     "end_timestamp": "00:00:20.000"
 }
 
-# Additional timestamp options for testing
+# Additional timestamp examples (for reference)
 TEST_TIMESTAMPS = [
-    {"start": "00:00:05.000", "end": "00:00:15.000"},
-    {"start": "00:00:30.000", "end": "00:00:40.000"},
-    {"start": "00:01:00.000", "end": "00:01:30.000"},
-    {"start": "00:02:00.000", "end": "00:02:30.000"}
+    {"start": "00:00:05.000", "end": "00:00:15.000", "description": "5-15 seconds"},
+    {"start": "00:00:30.000", "end": "00:00:40.000", "description": "30-40 seconds"},
+    {"start": "00:01:00.000", "end": "00:01:30.000", "description": "1:00-1:30 minute mark"},
+    {"start": "00:02:00.000", "end": "00:02:30.000", "description": "2:00-2:30 minute mark"}
 ]
 
 # New function for downloading 1080p videos
@@ -512,7 +492,7 @@ def download_1080p_task(job_id, youtube_url):
     try:
         # Configure yt-dlp with options for 1080p
         ydl_opts = {
-            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+            'format': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4] / bv*[height<=1080]+ba/b[height<=1080]',
             'merge_output_format': 'mp4',
             'outtmpl': output_path,
             'quiet': True,
